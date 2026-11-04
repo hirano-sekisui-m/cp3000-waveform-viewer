@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+settings.json
+demo_data/
+reports/
+# never commit real instrument data
+*.dat
+*CSV_data.csv
