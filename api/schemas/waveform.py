@@ -13,6 +13,7 @@ class DeriveWaveformsRequest(BaseModel):
     align: str = "off"  # "off" | "tc2" | "peak" | "rise"
     baseline: bool = False
     thin: bool = True  # downsample to ~1500 points for overlay
+    ref_point_idx: int = 0  # index for chromogenic baseline alignment
 
 
 class WaveformSeries(BaseModel):
@@ -28,6 +29,7 @@ class WaveformSeries(BaseModel):
     slope: List[Optional[float]]
     acceleration: List[Optional[float]]
     abs_slope: Optional[List[Optional[float]]] = None
+    base_aligned: Optional[List[Optional[float]]] = None
     tc2: Optional[float] = None
     te2: Optional[float] = None
     shift: float = 0.0
@@ -51,5 +53,6 @@ class DetailWaveformResponse(BaseModel):
     slope: List[Optional[float]]
     acceleration: List[Optional[float]]
     abs_slope: Optional[List[Optional[float]]] = None
+    base_aligned: Optional[List[Optional[float]]] = None
     calculated: Dict[str, Any]  # Tc2, Te2, Tc1, Te1, vmax, t_vmax, device_val, diff
     record_info: Dict[str, Any]  # full row metadata

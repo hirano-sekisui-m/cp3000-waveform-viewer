@@ -13,7 +13,7 @@ interface Props {
   onChangeOptions: (opts: Partial<SidebarOptions>) => void;
 }
 
-export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }) => {
+export const TabDetail: React.FC<Props> = ({ summary, records, options, onChangeOptions }) => {
   const [selectedNo, setSelectedNo] = useState<number>(records[0]?.No || 1);
   const [detail, setDetail] = useState<DetailWaveformResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -32,6 +32,7 @@ export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }
     getWaveformDetail(selectedNo, {
       window_end_sec: options.windowEndSec ? parseFloat(options.windowEndSec) : null,
       coag_ratio: options.coagRatio,
+      ref_point_idx: options.chromoRefPointIdx,
     })
       .then((res) => {
         setDetail(res);
@@ -42,7 +43,7 @@ export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedNo, options.windowEndSec, options.coagRatio]);
+  }, [selectedNo, options.windowEndSec, options.coagRatio, options.chromoRefPointIdx]);
 
   const handleStep = (delta: number) => {
     if (records.length === 0) return;
@@ -71,13 +72,13 @@ export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }
       yaxis: "y",
       line: { color: "#2563eb", width: 1.5 },
     });
-    // 2. Scaled
+    // 2. Base aligned / Scaled
     traces.push({
       type: "scatter",
       mode: "lines",
       x: detail.time,
-      y: detail.scaled,
-      name: "吸光度変化 (0–100%)",
+      y: detail.base_aligned || detail.scaled,
+      name: "吸光度変化 (基準点=0)",
       yaxis: "y2",
       line: { color: "#2563eb", width: 1.5 },
     });
@@ -170,7 +171,7 @@ export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }
   };
 
   const titles = isChromogenic
-    ? ["生波形 (0.1 mAbs)", "吸光度変化 (0–100 %)", "吸光度変化率 (mAbs/min.)"]
+    ? ["生波形 (0.1 mAbs)", "吸光度変化 (基準点=0, 0.1 mAbs)", "吸光度変化率 (mAbs/min.)"]
     : ["生波形", "凝固波形 (0–100 %)", "速度 (%/s)", "加速度 (%/s²)"];
 
   titles.forEach((t, i) => {
@@ -231,6 +232,9 @@ export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }
           isChromogenic={isChromogenic}
           value={options.windowEndSec}
           onChange={(val) => onChangeOptions({ windowEndSec: val })}
+          refPointIdx={options.chromoRefPointIdx}
+          onChangeRefPoint={(idx) => onChangeOptions({ chromoRefPointIdx: idx })}
+          timePoints={summary.time_points}
         />
       </div>
 

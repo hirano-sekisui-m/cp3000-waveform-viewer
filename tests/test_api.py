@@ -143,7 +143,7 @@ def test_load_chromogenic_standalone_csv():
     assert recs[0]["測定モード"] == "比色項目"
 
     # Derive waveforms with abs_slope
-    wf_res = client.post("/api/waveforms/derive", json={"positions": [0], "align": "off"})
+    wf_res = client.post("/api/waveforms/derive", json={"positions": [0], "align": "off", "ref_point_idx": 4})
     assert wf_res.status_code == 200
     wf_data = wf_res.json()
     assert len(wf_data["series"]) == 1
@@ -151,4 +151,22 @@ def test_load_chromogenic_standalone_csv():
     assert s0["mode"] == "比色項目"
     assert s0["abs_slope"] is not None
     assert len(s0["abs_slope"]) == len(s0["time"])
+    assert s0["base_aligned"] is not None
+    assert abs(s0["base_aligned"][4]) < 1e-6
+
+    # Test summary has time_points
+    assert len(summary["time_points"]) > 0
+
+    # Detail test
+    det_res = client.get(f"/api/waveforms/detail/{recs[0]['No']}?ref_point_idx=4")
+    assert det_res.status_code == 200
+    det_data = det_res.json()
+    assert det_data["base_aligned"] is not None
+    assert abs(det_data["base_aligned"][4]) < 1e-6
+
+    # Export test
+    exp_res = client.post("/api/export/waveforms-csv", json={"positions": [0], "kind": "base_aligned", "ref_point_idx": 4})
+    assert exp_res.status_code == 200
+    assert exp_res.headers["content-type"].startswith("text/csv")
+
 

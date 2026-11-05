@@ -101,6 +101,7 @@ def derive_waveforms(req: DeriveWaveformsRequest) -> DeriveWaveformsResponse:
         slope = d.slope[k, :n_k]
         acceleration = d.acceleration[k, :n_k]
         abs_slope = d.abs_slope[k, :n_k] if d.abs_slope is not None else None
+        base_aligned = d.align_chromogenic_baseline(k, ref_idx=req.ref_point_idx)
 
         # Downsample if thin requested
         if req.thin and len(shifted_time) > 1500:
@@ -114,6 +115,8 @@ def derive_waveforms(req: DeriveWaveformsRequest) -> DeriveWaveformsResponse:
             acceleration = acceleration[idx]
             if abs_slope is not None:
                 abs_slope = abs_slope[idx]
+            if base_aligned is not None:
+                base_aligned = base_aligned[idx]
 
         tc2 = float(d.tetc["Tc2"].iloc[k]) if np.isfinite(d.tetc["Tc2"].iloc[k]) else None
         te2 = float(d.tetc["Te2"].iloc[k]) if np.isfinite(d.tetc["Te2"].iloc[k]) else None
@@ -137,10 +140,12 @@ def derive_waveforms(req: DeriveWaveformsRequest) -> DeriveWaveformsResponse:
             slope=_to_clean_list(slope) or [],
             acceleration=_to_clean_list(acceleration) or [],
             abs_slope=_to_clean_list(abs_slope),
+            base_aligned=_to_clean_list(base_aligned),
             tc2=float(round(tc2 - shift, 2)) if tc2 is not None else None,
             te2=float(round(te2 - shift, 2)) if te2 is not None else None,
             shift=float(round(shift, 2)),
         ))
+
 
     return DeriveWaveformsResponse(
         series=series_list,
@@ -153,6 +158,7 @@ def get_waveform_detail(
     no: int,
     window_end_sec: Optional[float] = Query(None),
     coag_ratio: float = Query(0.5),
+    ref_point_idx: int = Query(0),
 ) -> DetailWaveformResponse:
     """Get full-resolution detail for a single waveform by No."""
     batch = session_store.current_batch
@@ -178,6 +184,8 @@ def get_waveform_detail(
     slope = d.slope[0, :n_k]
     acceleration = d.acceleration[0, :n_k]
     abs_slope = d.abs_slope[0, :n_k] if d.abs_slope is not None else None
+    base_aligned = d.align_chromogenic_baseline(0, ref_idx=ref_point_idx)
+
 
     # Calculated metrics
     v = slope
@@ -231,6 +239,8 @@ def get_waveform_detail(
         slope=_to_clean_list(slope) or [],
         acceleration=_to_clean_list(acceleration) or [],
         abs_slope=_to_clean_list(abs_slope),
+        base_aligned=_to_clean_list(base_aligned),
         calculated=calculated,
+
         record_info=record_info,
     )

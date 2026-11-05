@@ -16,6 +16,7 @@ export interface SidebarOptions {
   thin: boolean;
   windowEndSec: string;
   coagRatio: number;
+  chromoRefPointIdx: number;
 }
 
 interface Props {
@@ -28,6 +29,7 @@ interface Props {
   onSelectFolder: (folder: string) => void;
   onUploadFiles: (files: File[]) => void;
   availableModes: string[];
+  timePoints?: number[];
 }
 
 export const COAG_WAVE_TYPES: Record<string, string> = {
@@ -40,9 +42,11 @@ export const COAG_WAVE_TYPES: Record<string, string> = {
 
 export const CHROMO_WAVE_TYPES: Record<string, string> = {
   raw: "生波形 (0.1 mAbs)",
-  scaled: "吸光度変化 (0–100%)",
+  base_aligned: "吸光度変化 (基準点=0)",
   abs_slope: "吸光度変化率 (mAbs/min.)",
+  scaled: "吸光度変化 (0–100%)",
 };
+
 
 export const Sidebar: React.FC<Props> = ({
   isOpen,
@@ -54,7 +58,9 @@ export const Sidebar: React.FC<Props> = ({
   onSelectFolder,
   onUploadFiles,
   availableModes,
+  timePoints,
 }) => {
+
   const [showCalcSettings, setShowCalcSettings] = useState(false);
   const isChromogenic = options.selectedMode === "比色項目";
 
@@ -219,7 +225,25 @@ export const Sidebar: React.FC<Props> = ({
           <span>時間軸と配置</span>
         </div>
 
-        {!isChromogenic && (
+        {isChromogenic ? (
+          <div>
+            <span className="sidebar-label">0 点の基準ポイント (何秒目を 0 にするか)</span>
+            <select
+              className="select-box"
+              value={options.chromoRefPointIdx}
+              onChange={(e) => onChangeOptions({ chromoRefPointIdx: parseInt(e.target.value) })}
+            >
+              {(timePoints && timePoints.length > 0
+                ? timePoints
+                : Array.from({ length: 60 }, (_, i) => i * 2.0)
+              ).map((sec, i) => (
+                <option key={i} value={i}>
+                  第 {i + 1} ポイント ({sec.toFixed(1)} 秒)
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
           <div>
             <span className="sidebar-label">時間軸のそろえ方</span>
             <select
@@ -234,6 +258,7 @@ export const Sidebar: React.FC<Props> = ({
             </select>
           </div>
         )}
+
 
         <div style={{ display: "flex", gap: 8 }}>
           <div style={{ flex: 1 }}>

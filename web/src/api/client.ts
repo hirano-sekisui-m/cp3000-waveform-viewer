@@ -120,7 +120,9 @@ export async function deriveWaveforms(params: {
   align?: string;
   baseline?: boolean;
   thin?: boolean;
+  ref_point_idx?: number;
 }): Promise<{ series: WaveformSeries[]; skipped_count: number }> {
+
   const res = await fetch(`${BASE_URL}/waveforms/derive`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -132,13 +134,15 @@ export async function deriveWaveforms(params: {
 
 export async function getWaveformDetail(
   no: number,
-  params?: { window_end_sec?: number | null; coag_ratio?: number }
+  params?: { window_end_sec?: number | null; coag_ratio?: number; ref_point_idx?: number }
 ): Promise<DetailWaveformResponse> {
   const q = new URLSearchParams();
   if (params?.window_end_sec != null) q.set("window_end_sec", String(params.window_end_sec));
   if (params?.coag_ratio != null) q.set("coag_ratio", String(params.coag_ratio));
+  if (params?.ref_point_idx != null) q.set("ref_point_idx", String(params.ref_point_idx));
 
   const res = await fetch(`${BASE_URL}/waveforms/detail/${no}?${q.toString()}`);
+
   if (!res.ok) throw new Error(`Failed to get detail for waveform ${no}`);
   return res.json();
 }
@@ -152,6 +156,7 @@ export async function downloadWaveformsCsv(params: {
   kind: string;
   window_end_sec?: number | null;
   coag_ratio?: number;
+  ref_point_idx?: number;
 }): Promise<void> {
   const res = await fetch(`${BASE_URL}/export/waveforms-csv`, {
     method: "POST",

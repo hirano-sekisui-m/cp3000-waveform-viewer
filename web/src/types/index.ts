@@ -31,7 +31,9 @@ export interface BatchSummary {
   items_list: string[];
   groups_list: string[];
   columns: string[];
+  time_points?: number[];
 }
+
 
 export interface RecordItem {
   No: number;
@@ -68,7 +70,9 @@ export interface WaveformSeries {
   slope: (number | null)[];
   acceleration: (number | null)[];
   abs_slope?: (number | null)[] | null;
+  base_aligned?: (number | null)[] | null;
   tc2?: number | null;
+
   te2?: number | null;
   shift: number;
 }
@@ -97,6 +101,8 @@ export interface DetailWaveformResponse {
   slope: (number | null)[];
   acceleration: (number | null)[];
   abs_slope?: (number | null)[] | null;
+  base_aligned?: (number | null)[] | null;
   calculated: DetailCalculated;
+
   record_info: Record<string, string | number>;
 }

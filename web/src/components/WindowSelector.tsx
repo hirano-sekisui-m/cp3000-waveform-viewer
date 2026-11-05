@@ -4,14 +4,40 @@ interface Props {
   isChromogenic: boolean;
   value: string; // "" means "full"
   onChange: (val: string) => void;
+  refPointIdx?: number;
+  onChangeRefPoint?: (idx: number) => void;
+  timePoints?: number[];
 }
 
-export const WindowSelector: React.FC<Props> = ({ isChromogenic, value, onChange }) => {
+export const WindowSelector: React.FC<Props> = ({
+  isChromogenic,
+  value,
+  onChange,
+  refPointIdx = 0,
+  onChangeRefPoint,
+  timePoints,
+}) => {
   if (isChromogenic) {
+    const points =
+      timePoints && timePoints.length > 0
+        ? timePoints
+        : Array.from({ length: 60 }, (_, i) => i * 2.0);
+
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8125rem", color: "var(--text-muted)" }}>
-        <span style={{ fontWeight: 600 }}>解析窓:</span>
-        <span>全長 (固定)</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8125rem" }}>
+        <span style={{ fontWeight: 600, color: "var(--text-main)" }}>⏱️ 0 点の基準ポイント:</span>
+        <select
+          className="select-box"
+          style={{ width: "auto", padding: "0.2rem 0.6rem", fontSize: "0.8125rem", fontWeight: 500 }}
+          value={refPointIdx}
+          onChange={(e) => onChangeRefPoint?.(parseInt(e.target.value))}
+        >
+          {points.map((sec, i) => (
+            <option key={i} value={i}>
+              第 {i + 1} ポイント ({sec.toFixed(1)} 秒時点)
+            </option>
+          ))}
+        </select>
       </div>
     );
   }

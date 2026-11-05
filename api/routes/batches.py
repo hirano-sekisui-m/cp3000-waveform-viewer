@@ -224,6 +224,14 @@ def get_current_summary() -> BatchSummaryResponse:
     groups = sorted(table[group_col].dropna().astype(str).unique().tolist()) if group_col else []
     items = sorted(table["項目名"].dropna().unique().tolist()) if "項目名" in table.columns else []
 
+    time_pts: List[float] = []
+    if batch.time_points is not None and len(batch.time_points):
+        time_pts = [float(round(x, 1)) for x in batch.time_points]
+    elif len(batch.records):
+        longest = max(batch.records, key=lambda r: len(r.time) if r.time is not None else 0)
+        if longest.time is not None:
+            time_pts = [float(round(x, 1)) for x in longest.time]
+
     return BatchSummaryResponse(
         name=batch.name,
         total_records=len(batch.records),
@@ -239,7 +247,9 @@ def get_current_summary() -> BatchSummaryResponse:
         items_list=items,
         groups_list=groups,
         columns=list(table.columns),
+        time_points=time_pts,
     )
+
 
 
 @router.post("/records", response_model=RecordsListResponse)

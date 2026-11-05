@@ -18,9 +18,10 @@ router = APIRouter()
 
 class ExportWaveformsRequest(BaseModel):
     positions: List[int]
-    kind: str = "raw"  # "raw" | "scaled" | "endpoint_scaled" | "slope" | "acceleration" | "abs_slope"
+    kind: str = "raw"  # "raw" | "scaled" | "endpoint_scaled" | "slope" | "acceleration" | "abs_slope" | "base_aligned"
     window_end_sec: Optional[float] = None
     coag_ratio: float = 0.5
+    ref_point_idx: int = 0
 
 
 @router.get("/table-csv")
@@ -85,6 +86,10 @@ def export_waveforms_csv(req: ExportWaveformsRequest) -> Response:
             return d.acceleration[k, :n_k]
         elif kind == "abs_slope" and d.abs_slope is not None:
             return d.abs_slope[k, :n_k]
+        elif kind == "base_aligned":
+            aligned = d.align_chromogenic_baseline(k, ref_idx=req.ref_point_idx)
+            if aligned is not None:
+                return aligned
         return d.raw[k, :n_k]
 
     if d.times is None:

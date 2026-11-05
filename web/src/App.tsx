@@ -29,6 +29,7 @@ export const App: React.FC = () => {
     thin: true,
     windowEndSec: "",
     coagRatio: 0.5,
+    chromoRefPointIdx: 0,
   });
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -64,16 +65,16 @@ export const App: React.FC = () => {
       const single = modes[0];
       return {
         mode: single,
-        waveTypes: single === "比色項目" ? ["raw", "scaled", "abs_slope"] : ["raw", "scaled", "slope"],
+        waveTypes: single === "比色項目" ? ["raw", "base_aligned", "abs_slope"] : ["raw", "scaled", "slope"],
       };
     }
     if (modes.includes("比色項目") && !modes.includes("凝固項目")) {
-      return { mode: "比色項目", waveTypes: ["raw", "scaled", "abs_slope"] };
+      return { mode: "比色項目", waveTypes: ["raw", "base_aligned", "abs_slope"] };
     }
     const defaultMode = modes[0] || "凝固項目";
     return {
       mode: defaultMode,
-      waveTypes: defaultMode === "比色項目" ? ["raw", "scaled", "abs_slope"] : ["raw", "scaled", "slope"],
+      waveTypes: defaultMode === "比色項目" ? ["raw", "base_aligned", "abs_slope"] : ["raw", "scaled", "slope"],
     };
   };
 
@@ -266,6 +267,7 @@ export const App: React.FC = () => {
         onSelectFolder={handleLoadBatch}
         onUploadFiles={handleUploadFiles}
         availableModes={summary?.modes || []}
+        timePoints={summary?.time_points}
       />
     </div>
   );

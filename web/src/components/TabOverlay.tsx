@@ -79,6 +79,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
       align: options.align,
       baseline: options.baseline,
       thin: options.thin,
+      ref_point_idx: options.chromoRefPointIdx,
     })
       .then((res) => {
         setSeriesData(res.series);
@@ -96,7 +97,9 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
     options.align,
     options.baseline,
     options.thin,
+    options.chromoRefPointIdx,
   ]);
+
 
   // Drag & click row selection handlers
   const handleMouseDown = (e: React.MouseEvent, index: number) => {
@@ -159,6 +162,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
       kind: downloadKind,
       window_end_sec: options.windowEndSec ? parseFloat(options.windowEndSec) : null,
       coag_ratio: options.coagRatio,
+      ref_point_idx: options.chromoRefPointIdx,
     });
   };
 
@@ -184,7 +188,10 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
           ? s.acceleration
           : kind === "abs_slope" && s.abs_slope
           ? s.abs_slope
+          : kind === "base_aligned" && s.base_aligned
+          ? s.base_aligned
           : s.raw;
+
 
       traces.push({
         type: "scattergl",
@@ -328,7 +335,11 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
               isChromogenic={isChromogenic}
               value={options.windowEndSec}
               onChange={(val) => onChangeOptions({ windowEndSec: val })}
+              refPointIdx={options.chromoRefPointIdx}
+              onChangeRefPoint={(idx) => onChangeOptions({ chromoRefPointIdx: idx })}
+              timePoints={summary.time_points}
             />
+
 
             {/* CSV Download bar */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

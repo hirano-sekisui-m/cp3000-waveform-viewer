@@ -55,6 +55,8 @@ class BatchSummaryResponse(BaseModel):
     items_list: List[str] = []
     groups_list: List[str] = []
     columns: List[str] = []
+    time_points: List[float] = []
+
 
 
 class RecordQuery(BaseModel):
