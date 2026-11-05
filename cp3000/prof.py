@@ -31,6 +31,7 @@ class ProfRecord:
     error_flag: int
     data_count: int
     data: np.ndarray
+    time: Optional[np.ndarray] = None
 
 
 def u16_le(buf: bytes, off: int) -> int:

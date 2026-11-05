@@ -9,7 +9,8 @@ The string helpers, ``read_csv_sections``, ``canonicalize_csv_attr_columns`` and
 * prof (内部依頼No, 項目番号) -> LOG (内部依頼No, 項目No) -> 表示依頼No -> CSV (依頼No, 項目番号),
   which is the same key path as merger.merge_raw_inputs, read from the other side;
 * the LOG file is parsed in memory (no "LOG展開後.xlsx" is written next to the raw data);
-* CSV and LOG are optional: with prof only, the waveforms are shown by 内部依頼No / 項目番号.
+* CSV and LOG are optional: with prof only, the waveforms are shown by 内部依頼No / 項目番号;
+* with CSV only (no prof), the simplified timecourse in Section 2 (ﾌﾟﾛﾌｧｲﾙ) of the CSV is loaded.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import pandas as pd
 
 from .log import LogTables, parse_log_dat
 from .prof import ProfRecord, detect_profile_format, parse_prof_dat
-from .signal import TIME_STEP_SEC, time_axis
+from .signal import TIME_STEP_SEC, Derived, derive_batch, time_axis
 
 
 # ---- copied from src/cwa/ingestion/merger.py ------------------------------------------
@@ -209,7 +210,6 @@ def csv_build_item_master(body2: Any) -> pd.DataFrame:
     return pd.DataFrame(columns=["項目名", "項目番号"])
 
 
-
 # ---- files in a folder --------------------------------------------------------------
 
 def _visible_files(folder: Path) -> List[Path]:
@@ -228,7 +228,7 @@ class BatchFiles:
 
     @property
     def ok(self) -> bool:
-        return bool(self.prof)
+        return bool(self.prof or self.csv)
 
 
 def find_batch_files(folder: Union[str, Path]) -> BatchFiles:
@@ -245,8 +245,19 @@ def find_batch_files(folder: Union[str, Path]) -> BatchFiles:
     return BatchFiles(folder=f, prof=prof, csv=csvs, log=log)
 
 
+def _has_prof_file(folder: Path) -> bool:
+    try:
+        return any(
+            p.is_file() and not p.name.startswith(("~$", "."))
+            and "prof" in p.name.lower() and p.suffix.lower() == ".dat"
+            for p in folder.iterdir()
+        )
+    except (PermissionError, OSError):
+        return False
+
+
 def find_batch_folders(root: Union[str, Path], max_depth: int = 3) -> List[Path]:
-    """Folders under ``root`` (including itself) that contain a prof*.dat file, newest name first."""
+    """Folders under ``root`` (including itself) that contain prof*.dat or *.csv, prof folders first."""
     root = Path(clean_path(root))
     if not root.is_dir():
         return []
@@ -257,7 +268,10 @@ def find_batch_folders(root: Union[str, Path], max_depth: int = 3) -> List[Path]
             entries = list(d.iterdir())
         except (PermissionError, OSError):
             return
-        if any(p.is_file() and "prof" in p.name.lower() and p.suffix.lower() == ".dat" for p in entries):
+        visible = [p for p in entries if p.is_file() and not p.name.startswith(("~$", "."))]
+        has_prof = any("prof" in p.name.lower() and p.suffix.lower() == ".dat" for p in visible)
+        has_csv = any(p.suffix.lower() == ".csv" for p in visible)
+        if has_prof or has_csv:
             found.append(d)
         if depth >= max_depth:
             return
@@ -266,7 +280,11 @@ def find_batch_folders(root: Union[str, Path], max_depth: int = 3) -> List[Path]
                 walk(p, depth + 1)
 
     walk(root, 0)
-    return sorted(found, key=lambda p: str(p.relative_to(root)) if p != root else "", reverse=True)
+    return sorted(
+        found,
+        key=lambda p: (1 if _has_prof_file(p) else 0, str(p.relative_to(root)) if p != root else ""),
+        reverse=True,
+    )
 
 
 # ---- CSV ------------------------------------------------------------------------------
@@ -355,23 +373,153 @@ def csv_attributes_and_items(header1: List[str], body1: List[List[str]]) -> Tupl
 
 
 @dataclass
+class CsvProfile:
+    """One simplified timecourse profile from Section 2 (ﾌﾟﾛﾌｧｲﾙ) of a CP3000 CSV."""
+
+    no: int
+    req_no_raw: str
+    req_no_norm: str
+    item_name: str
+    item_no: int
+    port_no: int
+    process_val: str
+    process_flag: str
+    time: np.ndarray
+    data: np.ndarray
+
+
+def csv_parse_profiles(header2: Sequence[Any], body2: Any) -> List[CsvProfile]:
+    """Parse simplified timecourse profiles from Section 2 of the device CSV.
+
+    Supports both:
+    * Standard 2-row CP3000 CSV format: row ``i`` holds ``(依頼No., 項目名, 項目番号, 測光ﾎﾟｰﾄ,
+      処理値, フラグ, t_0, t_1, ...)`` and row ``i + 1`` (with blank ``依頼No.``) holds the
+      corresponding absorbance change values ``v_0, v_1, ...``. Each measurement record keeps its
+      own time axis ``t_0, t_1, ...`` (which varies with measurement mode / interval).
+    * Single-row format where ``header2[prof_col:]`` holds numeric time points and each row holds values.
+    """
+    if isinstance(body2, pd.DataFrame):
+        rows = body2.values.tolist() if not body2.empty else []
+    elif isinstance(body2, list):
+        rows = body2
+    else:
+        return []
+
+    clean = [r for r in rows if any(str(x).strip() != "" for x in r)]
+    prof_col = 6
+    for i, cell in enumerate(header2):
+        s = str(cell).strip()
+        if s in ("ﾌﾟﾛﾌｧｲﾙ", "プロファイル"):
+            prof_col = i
+            break
+
+    header_times: List[float] = []
+    for cell in list(header2)[prof_col:]:
+        s = str(cell).strip()
+        if s == "":
+            break
+        try:
+            header_times.append(float(s))
+        except ValueError:
+            header_times = []
+            break
+
+    profiles: List[CsvProfile] = []
+    idx = 0
+    while idx < len(clean):
+        r = clean[idx]
+        if len(r) < 3:
+            idx += 1
+            continue
+        req_raw = str(r[0]).strip()
+        item_name = str(r[1]).strip()
+        item_no_str = str(r[2]).strip()
+        if not (req_raw != "" and item_name != "" and re.fullmatch(r"\d+", item_no_str)):
+            idx += 1
+            continue
+        item_no = int(item_no_str)
+        port_str = str(r[3]).strip() if len(r) > 3 else ""
+        port_no = int(port_str) if re.fullmatch(r"\d+", port_str) else 0
+        proc_val = str(r[4]).strip() if len(r) > 4 else ""
+        proc_flag = str(r[5]).strip() if len(r) > 5 else ""
+
+        t_vals: List[float] = []
+        v_vals: List[float] = []
+
+        if idx + 1 < len(clean) and str(clean[idx + 1][0]).strip() == "":
+            r_val = clean[idx + 1]
+            col_end = prof_col
+            for c_idx in range(prof_col, len(r)):
+                s = str(r[c_idx]).strip()
+                if s == "":
+                    break
+                try:
+                    t_vals.append(float(s))
+                    col_end = c_idx + 1
+                except ValueError:
+                    break
+            for c_idx in range(prof_col, col_end):
+                s = str(r_val[c_idx]).strip() if c_idx < len(r_val) else ""
+                try:
+                    v_vals.append(float(s))
+                except ValueError:
+                    v_vals.append(np.nan)
+            idx += 2
+        elif header_times and len(r) > prof_col:
+            for c_idx, t_pt in enumerate(header_times, start=prof_col):
+                if c_idx >= len(r):
+                    break
+                s = str(r[c_idx]).strip()
+                if s == "":
+                    break
+                try:
+                    v_vals.append(float(s))
+                    t_vals.append(t_pt)
+                except ValueError:
+                    break
+            idx += 1
+        else:
+            idx += 1
+
+        if t_vals and v_vals:
+            profiles.append(
+                CsvProfile(
+                    no=len(profiles) + 1,
+                    req_no_raw=req_raw,
+                    req_no_norm=norm_reqno(req_raw),
+                    item_name=item_name,
+                    item_no=item_no,
+                    port_no=port_no,
+                    process_val=proc_val,
+                    process_flag=proc_flag,
+                    time=np.asarray(t_vals, dtype=float),
+                    data=np.asarray(v_vals, dtype=float),
+                )
+            )
+
+    return profiles
+
+
+@dataclass
 class CsvTables:
     attributes: pd.DataFrame   # one row per 依頼No (依頼No_norm + attribute columns)
     items: pd.DataFrame        # 依頼No_norm, 項目名, 測定値, Dフラグ, 項目番号
     item_master: pd.DataFrame  # 項目名, 項目番号 (section 2)
+    profiles: List[CsvProfile] = field(default_factory=list)
 
 
 def read_device_csv(csv_path: Union[str, Path], encoding: str = "cp932") -> CsvTables:
-    header1, body1, _header2, body2 = read_csv_sections(csv_path, encoding=encoding)
+    header1, body1, header2, body2 = read_csv_sections(csv_path, encoding=encoding)
     attrs, items = csv_attributes_and_items(header1, body1)
     item_master = csv_build_item_master(body2)
+    profiles = csv_parse_profiles(header2, body2)
     item_map = dict(zip(item_master["項目名"], item_master["項目番号"]))
     items["項目番号"] = items["項目名"].map(item_map)
     miss = items["項目番号"].isna()
     if miss.any():  # "LA1_ratio" -> item number of "LA1" (as in merger)
         items.loc[miss, "項目番号"] = items.loc[miss, "項目名"].str.replace("_ratio", "", regex=False).map(item_map)
     items["項目番号"] = pd.to_numeric(items["項目番号"], errors="coerce").astype("Int64")
-    return CsvTables(attributes=attrs, items=items, item_master=item_master)
+    return CsvTables(attributes=attrs, items=items, item_master=item_master, profiles=profiles)
 
 
 # ---- LOG ------------------------------------------------------------------------------
@@ -457,10 +605,10 @@ def log_request_key(tables: LogTables) -> pd.DataFrame:
 
 @dataclass
 class Batch:
-    """One measurement batch: prof records plus a table with one row per record."""
+    """One measurement batch: prof (or CSV profile) records plus a table with one row per record."""
 
     name: str
-    prof_path: Path
+    prof_path: Optional[Path]
     csv_path: Optional[Path]
     log_path: Optional[Path]
     profile_n: int
@@ -470,6 +618,44 @@ class Batch:
     log_key: Optional[pd.DataFrame] = None
     log_info: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    time_points: Optional[np.ndarray] = None
+
+    def record_time(self, pos: int) -> np.ndarray:
+        """Time axis (in seconds) of the record at ``pos``."""
+        r = self.records[int(pos)]
+        if r.time is not None and len(r.time):
+            return r.time.astype(float, copy=True)
+        if self.time_points is not None and len(self.time_points) >= len(r.data):
+            return self.time_points[: len(r.data)].astype(float, copy=True)
+        return time_axis(len(r.data))
+
+    def time_step_summary(self) -> str:
+        """Human-readable summary of time interval(s) across records (e.g. '2.8秒間隔' or '1.4〜4.8秒間隔')."""
+        if self.prof_path is not None:
+            return f"{TIME_STEP_SEC:g}秒間隔"
+        steps: List[float] = []
+        for r in self.records:
+            t = r.time if (r.time is not None and len(r.time) > 1) else self.time_points
+            if t is not None and len(t) > 1:
+                steps.append(round(float(np.median(np.diff(t))), 3))
+        if not steps:
+            return f"{TIME_STEP_SEC:g}秒間隔"
+        lo, hi = min(steps), max(steps)
+        if abs(hi - lo) < 1e-6:
+            return f"{lo:g}秒間隔"
+        return f"{lo:g}〜{hi:g}秒間隔"
+
+    def profile_n_summary(self) -> str:
+        """Human-readable summary of points per record."""
+        if self.prof_path is not None or not self.records:
+            return f"{self.profile_n} 点/レコード"
+        counts = [len(r.data) for r in self.records if len(r.data) > 0]
+        if not counts:
+            return f"{self.profile_n} 点/レコード"
+        lo, hi = min(counts), max(counts)
+        if lo == hi:
+            return f"{lo} 点/レコード"
+        return f"{lo}〜{hi} 点/レコード"
 
     def matrix(self, positions: Sequence[int]) -> Tuple[np.ndarray, np.ndarray]:
         """Raw waveforms of the given record positions, padded with NaN to the longest one."""
@@ -478,7 +664,115 @@ class Batch:
         out = np.full((len(recs), n), np.nan)
         for k, r in enumerate(recs):
             out[k, : len(r.data)] = r.data.astype(float)
+        if recs:
+            longest_rec = max(recs, key=lambda r: len(r.time) if r.time is not None else 0)
+            if longest_rec.time is not None and len(longest_rec.time) == n:
+                return longest_rec.time.astype(float, copy=True), out
+        if self.time_points is not None:
+            if n <= len(self.time_points):
+                return self.time_points[:n].copy(), out
+            dt = float(np.median(np.diff(self.time_points))) if len(self.time_points) > 1 else TIME_STEP_SEC
+            extra = self.time_points[-1] + dt * np.arange(1, n - len(self.time_points) + 1)
+            return np.r_[self.time_points, np.round(extra, 1)], out
         return time_axis(n), out
+
+    def derive(
+        self,
+        positions: Sequence[int],
+        *,
+        window_end_sec: Optional[float] = None,
+        coag_ratio: float = 0.5,
+        do_trim: bool = False,
+    ) -> Derived:
+        """Derive waveforms and Te/Tc for ``positions``, honoring each record's own time axis."""
+        pos_list = [int(p) for p in positions]
+        is_csv = self.prof_path is None
+        if not pos_list:
+            return derive_batch(
+                np.empty((0, 0)),
+                np.empty(0),
+                window_end_sec=window_end_sec,
+                coag_ratio=coag_ratio,
+                do_trim=do_trim,
+                is_csv_profile=is_csv,
+            )
+
+        rec_times = [self.record_time(p) for p in pos_list]
+        t_longest = max(rec_times, key=len)
+        same_grid = all(
+            len(tk) == 0 or np.allclose(tk, t_longest[: len(tk)], atol=1e-6)
+            for tk in rec_times
+        )
+        if same_grid:
+            t, m = self.matrix(pos_list)
+            d = derive_batch(
+                m,
+                t,
+                window_end_sec=window_end_sec,
+                coag_ratio=coag_ratio,
+                do_trim=do_trim,
+                is_csv_profile=is_csv,
+            )
+            if any(len(tk) != len(t_longest) for tk in rec_times):
+                max_t = float(d.time[-1]) if len(d.time) else np.inf
+                d.times = [tk[tk <= max_t + 1e-9] for tk in rec_times]
+            return d
+
+        groups: Dict[Tuple[float, ...], List[int]] = {}
+        for k, tk in enumerate(rec_times):
+            sig_key = tuple(np.round(tk, 4).tolist())
+            groups.setdefault(sig_key, []).append(k)
+
+        group_derived: List[Tuple[List[int], Derived]] = []
+        for ks in groups.values():
+            sub_pos = [pos_list[k] for k in ks]
+            t_sub, m_sub = self.matrix(sub_pos)
+            d_sub = derive_batch(
+                m_sub,
+                t_sub,
+                window_end_sec=window_end_sec,
+                coag_ratio=coag_ratio,
+                do_trim=do_trim,
+                is_csv_profile=is_csv,
+            )
+            group_derived.append((ks, d_sub))
+
+        n_rows = len(pos_list)
+        max_cols = max((d_sub.raw.shape[1] for _, d_sub in group_derived), default=0)
+        raw = np.full((n_rows, max_cols), np.nan)
+        cumulative = np.full((n_rows, max_cols), np.nan)
+        scaled = np.full((n_rows, max_cols), np.nan)
+        endpoint_scaled = np.full((n_rows, max_cols), np.nan)
+        slope = np.full((n_rows, max_cols), np.nan)
+        acceleration = np.full((n_rows, max_cols), np.nan)
+        times_out: List[np.ndarray] = [np.empty(0, dtype=float) for _ in range(n_rows)]
+        tetc_rows: List[Optional[pd.Series]] = [None] * n_rows
+
+        for ks, d_sub in group_derived:
+            c = d_sub.raw.shape[1]
+            for local_i, k in enumerate(ks):
+                raw[k, :c] = d_sub.raw[local_i]
+                cumulative[k, :c] = d_sub.cumulative[local_i]
+                scaled[k, :c] = d_sub.scaled[local_i]
+                endpoint_scaled[k, :c] = d_sub.endpoint_scaled[local_i]
+                slope[k, :c] = d_sub.slope[local_i]
+                acceleration[k, :c] = d_sub.acceleration[local_i]
+                times_out[k] = d_sub.time.copy()
+                tetc_rows[k] = d_sub.tetc.iloc[local_i]
+
+        tetc_df = pd.DataFrame(tetc_rows).reset_index(drop=True)
+        rep_time = max(times_out, key=len).copy() if times_out else np.empty(0, dtype=float)
+        return Derived(
+            time=rep_time,
+            raw=raw,
+            cumulative=cumulative,
+            scaled=scaled,
+            endpoint_scaled=endpoint_scaled,
+            slope=slope,
+            acceleration=acceleration,
+            tetc=tetc_df,
+            times=times_out,
+        )
 
 
 def _first_non_ratio(items: pd.DataFrame) -> pd.DataFrame:
@@ -486,8 +780,102 @@ def _first_non_ratio(items: pd.DataFrame) -> pd.DataFrame:
     return base.dropna(subset=["項目番号"]).drop_duplicates(["依頼No_norm", "項目番号"], keep="first")
 
 
+def _load_csv_only_batch(
+    csv_path: Path,
+    *,
+    csv_encoding: str = "cp932",
+    name: Optional[str] = None,
+) -> Batch:
+    """Build a Batch directly from Section 1 + Section 2 (ﾌﾟﾛﾌｧｲﾙ) of a CP3000 CSV file."""
+    warnings: List[str] = []
+    csv_tables = read_device_csv(csv_path, encoding=csv_encoding)
+    profiles = csv_tables.profiles
+    if not profiles:
+        raise ValueError("CSV 内にプロファイル(タイムコース)データが含まれていません。")
+
+    records: List[ProfRecord] = []
+    for p in profiles:
+        sec = int(round(float(p.time[-1]))) if len(p.time) else 0
+        records.append(
+            ProfRecord(
+                no=p.no,
+                internal_request_no=0,
+                item_no=p.item_no,
+                port_no=p.port_no,
+                sec=sec,
+                error_flag=0,
+                data_count=len(p.data),
+                data=p.data.copy(),
+                time=p.time.copy(),
+            )
+        )
+
+    longest_time = max((p.time for p in profiles), key=len)
+    time_points = longest_time.copy()
+    profile_n = len(time_points)
+
+    table = pd.DataFrame({
+        "No": [p.no for p in profiles],
+        "依頼No": [p.req_no_norm for p in profiles],
+        "項目番号": pd.array([p.item_no for p in profiles], dtype="Int64"),
+        "項目名": [p.item_name for p in profiles],
+        "ポートNo": [p.port_no for p in profiles],
+        "秒": [int(round(float(p.time[-1]))) if len(p.time) else 0 for p in profiles],
+        "エラーフラグ": [0 for _ in profiles],
+        "データ数": [len(p.data) for p in profiles],
+        "時間間隔(秒)": [round(float(np.median(np.diff(p.time))), 2) if len(p.time) > 1 else 0.0 for p in profiles],
+        "測定時間(秒)": [round(float(p.time[-1]), 1) if len(p.time) else 0.0 for p in profiles],
+    })
+    dup = table.duplicated(["依頼No", "項目番号"], keep=False)
+    table["重複"] = dup
+    table["再測定"] = dup
+    if dup.any():
+        warnings.append(f"CSV 内で 依頼No・項目番号 が重複するプロファイルが {int(dup.sum())} 件あります(すべて一覧に残しています)。")
+
+    attrs = csv_tables.attributes
+    n_dup = int(attrs.duplicated("依頼No_norm").sum())
+    if n_dup:
+        warnings.append(f"CSV で同じ依頼No が {n_dup} 行重複しています(先頭の行を使いました)。")
+    attrs = attrs.drop_duplicates("依頼No_norm", keep="first").drop(columns=["依頼No."])
+    items = csv_tables.items
+    base = _first_non_ratio(items)[["依頼No_norm", "項目番号", "測定値", "Dフラグ"]]
+    ratio = (items[items["項目名"].str.endswith("_ratio")].dropna(subset=["項目番号"])
+             .drop_duplicates(["依頼No_norm", "項目番号"])[["依頼No_norm", "項目番号", "測定値"]]
+             .rename(columns={"測定値": "比"}))
+    table = table.merge(attrs, left_on="依頼No", right_on="依頼No_norm", how="left").drop(columns=["依頼No_norm"])
+    table = table.merge(base, left_on=["依頼No", "項目番号"], right_on=["依頼No_norm", "項目番号"], how="left")
+    table = table.drop(columns=["依頼No_norm"])
+    if len(ratio):
+        table = table.merge(ratio, left_on=["依頼No", "項目番号"], right_on=["依頼No_norm", "項目番号"], how="left")
+        table = table.drop(columns=["依頼No_norm"])
+    table["CSV対応"] = table["測定値"].notna()
+
+    first = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定値", "Dフラグ", "比"]
+    attr_cols = [c for c in csv_tables.attributes.columns
+                 if c not in ("依頼No_norm", "依頼No.") and c in table.columns]
+    rest = ["測定種別", "ﾗｯｸNo", "ポートNo", "秒", "エラーフラグ", "データ数", "時間間隔(秒)", "測定時間(秒)", "重複", "再測定", "CSV対応"]
+    order = [c for c in first if c in table.columns] + attr_cols + [c for c in rest if c in table.columns]
+    order += [c for c in table.columns if c not in order]
+    table = table[order].reset_index(drop=True)
+
+    return Batch(
+        name=name or csv_path.stem,
+        prof_path=None,
+        csv_path=csv_path,
+        log_path=None,
+        profile_n=profile_n,
+        records=records,
+        table=table,
+        csv=csv_tables,
+        log_key=None,
+        log_info={},
+        warnings=warnings,
+        time_points=time_points,
+    )
+
+
 def load_batch(
-    prof_path: Union[str, Path],
+    prof_path: Optional[Union[str, Path]] = None,
     csv_path: Optional[Union[str, Path]] = None,
     log_path: Optional[Union[str, Path]] = None,
     *,
@@ -495,7 +883,20 @@ def load_batch(
     csv_encoding: str = "cp932",
     name: Optional[str] = None,
 ) -> Batch:
-    """Read the prof file and, when given, the CSV and LOG files, and join them per waveform."""
+    """Read the prof file and, when given, the CSV and LOG files, and join them per waveform.
+
+    When ``prof_path`` is None (or a ``.csv`` file with ``csv_path=None``), loads the simplified
+    timecourse profiles from Section 2 of ``csv_path``.
+    """
+    if prof_path is not None and csv_path is None and Path(prof_path).suffix.lower() == ".csv":
+        csv_path = prof_path
+        prof_path = None
+
+    if prof_path is None:
+        if csv_path is None:
+            raise ValueError("prof ファイルまたは CSV ファイルのいずれかを指定してください。")
+        return _load_csv_only_batch(Path(csv_path), csv_encoding=csv_encoding, name=name)
+
     prof_path = Path(prof_path)
     warnings: List[str] = []
     profile_n, _, _, _, _ = detect_profile_format(prof_path, mode=profile_mode)
