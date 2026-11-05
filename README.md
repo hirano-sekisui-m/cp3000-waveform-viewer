@@ -1,4 +1,4 @@
-# CP3000 波形ビューア
+# CP3000 波形ビューワー
 
 CP3000 の生データ 3 種類(`prof*.dat`・`*CSV_data.csv`・`LOG*.dat`)を読み、凝固波形をブラウザで確認するアプリです。
 CWA-ML-tool から、生データの読込と波形計算の部分だけを切り出しています(出典は下記)。
@@ -56,13 +56,36 @@ cp3000/
   batch.py              CSV の読込と 3 ファイルの突合、フォルダの探索
   signal.py             移動平均・累積・速度・加速度、Te/Tc
   plots.py              Plotly の図
+dist_files/
+  start_viewer.bat      配布パッケージ用の起動 bat(Shift-JIS)
+  update_viewer.bat     配布パッケージ用の更新 bat(Shift-JIS)
+  viewer_ctl.py         起動・ヘルスチェック・差分更新スクリプト
+  README.txt            利用者向けの使い方説明書
+requirements-lock.txt   配布パッケージ用の固定ライブラリ一覧(Python 3.12 / win_amd64)
 tools/
+  build_dist.py         Python 同梱配布パッケージ(zip)のビルドスクリプト
   make_demo_batch.py    合成バッチの作成
   check_against_cwa.py  元の CWA-ML-tool のコードと結果が一致するかの確認
-tests/test_viewer.py    テスト(合成データのみ)
+tests/
+  test_viewer.py        波形読込・計算・画面表示のテスト(合成データのみ)
+  test_dist.py          配布パッケージ・起動 bat・更新 bat のテスト
 ```
 
 テスト: `.venv\Scripts\python -m pytest tests -v -p no:cacheprovider`
+
+## 配布パッケージのビルド(Python 不要の Windows 64 ビット向け)
+
+Python をインストールしていない PC 向けに、embeddable Python 3.12 とライブラリ一式を同梱した配布 zip を作成できます。
+
+```bat
+.venv\Scripts\python tools\build_dist.py
+```
+
+`dist/` に以下のファイルが出力されます:
+
+- `CP3000Viewer_<版>_full.zip`: 初回配布・runtime 更新用(展開して `start_viewer.bat` をダブルクリックするだけで起動)
+- `CP3000Viewer_app_<版>.zip`: アプリ更新用(`update_viewer.bat` が取り込む軽量パッケージ)
+- `latest.txt`: 共有フォルダに置く最新版情報
 
 ## 出典(CWA-ML-tool、commit a591105)
 

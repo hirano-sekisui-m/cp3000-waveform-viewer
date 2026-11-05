@@ -1,4 +1,4 @@
-"""CP3000 波形ビューア (Streamlit).
+"""CP3000 波形ビューワー (Streamlit).
 
     streamlit run app.py
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -24,11 +25,11 @@ from cp3000.plots import MAX_SERIES, WAVE_TYPES, Series, Theme, detail_figure, o
 from cp3000.signal import align_waveform_time, derive_batch
 
 APP_DIR = Path(__file__).resolve().parent
-SETTINGS = APP_DIR / "settings.json"
+SETTINGS = Path(os.environ.get("CP3000_SETTINGS") or (APP_DIR / "settings.json"))
 DEMO_DIR = APP_DIR / "demo_data"
 PLOT_CONFIG = {"displaylogo": False, "toImageButtonOptions": {"format": "png", "scale": 2, "filename": "cp3000_waveform"}}
 
-st.set_page_config(page_title="CP3000 波形ビューア", page_icon="📈", layout="wide")
+st.set_page_config(page_title="CP3000 波形ビューワー", page_icon="📈", layout="wide")
 
 st.markdown(
     """
@@ -63,6 +64,7 @@ def save_settings(**kw) -> None:
     data = load_settings()
     data.update(kw)
     try:
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
         SETTINGS.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -171,7 +173,7 @@ with st.sidebar:
         enc = st.selectbox("CSV の文字コード", ["cp932", "utf-8-sig", "utf-8"])
 
 if prof_p is None:
-    st.title("CP3000 波形ビューア")
+    st.title("CP3000 波形ビューワー")
     st.info("左のサイドバーで測定バッチのフォルダを選ぶか、ファイルをアップロードしてください。"
             "試しに見る場合は `python tools/make_demo_batch.py` で demo_data を作れます。")
     st.stop()
