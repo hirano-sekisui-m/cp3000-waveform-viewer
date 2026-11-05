@@ -4,17 +4,21 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { BatchSummary, DetailWaveformResponse, RecordItem } from "../types";
 import { getWaveformDetail } from "../api/client";
 import { SidebarOptions } from "./Sidebar";
+import { WindowSelector } from "./WindowSelector";
 
 interface Props {
   summary: BatchSummary;
   records: RecordItem[];
   options: SidebarOptions;
+  onChangeOptions: (opts: Partial<SidebarOptions>) => void;
 }
 
-export const TabDetail: React.FC<Props> = ({ records, options }) => {
+export const TabDetail: React.FC<Props> = ({ records, options, onChangeOptions }) => {
   const [selectedNo, setSelectedNo] = useState<number>(records[0]?.No || 1);
   const [detail, setDetail] = useState<DetailWaveformResponse | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const isChromogenic = options.selectedMode === "比色項目";
 
   useEffect(() => {
     if (records.length > 0 && (!selectedNo || !records.some((r) => r.No === selectedNo))) {
@@ -52,10 +56,7 @@ export const TabDetail: React.FC<Props> = ({ records, options }) => {
     return <div style={{ padding: 20 }}>読み込み中…</div>;
   }
 
-  // Build detail Plotly chart with 4 subplots
-  const isChromogenic = detail.mode === "比色項目";
   const numPanels = isChromogenic ? 3 : 4;
-
   const traces: any[] = [];
   const c = detail.calculated;
 
@@ -132,27 +133,29 @@ export const TabDetail: React.FC<Props> = ({ records, options }) => {
     });
   }
 
-  // Vertical line shapes for Te1, Tc1, Te2, Tc2, Device
+  // Vertical line shapes (Coagulation only)
   const shapes: any[] = [];
-  const addVline = (x: number | null | undefined, color: string, dash = "solid") => {
-    if (x == null || !isFinite(x)) return;
-    shapes.push({
-      type: "line",
-      xref: "x",
-      yref: "paper",
-      x0: x,
-      x1: x,
-      y0: 0,
-      y1: 1,
-      line: { color, width: 1.5, dash },
-    });
-  };
+  if (!isChromogenic) {
+    const addVline = (x: number | null | undefined, color: string, dash = "solid") => {
+      if (x == null || !isFinite(x)) return;
+      shapes.push({
+        type: "line",
+        xref: "x",
+        yref: "paper",
+        x0: x,
+        x1: x,
+        y0: 0,
+        y1: 1,
+        line: { color, width: 1.5, dash },
+      });
+    };
 
-  addVline(c.Tc1, "#94a3b8", "dot");
-  addVline(c.Te1, "#94a3b8", "dot");
-  addVline(c.Tc2, "#ef4444", "dash");
-  addVline(c.Te2, "#f97316", "dash");
-  addVline(c.device_val, "#d97706", "solid");
+    addVline(c.Tc1, "#94a3b8", "dot");
+    addVline(c.Te1, "#94a3b8", "dot");
+    addVline(c.Tc2, "#ef4444", "dash");
+    addVline(c.Te2, "#f97316", "dash");
+    addVline(c.device_val, "#d97706", "solid");
+  }
 
   const layout: any = {
     autosize: true,
@@ -185,29 +188,50 @@ export const TabDetail: React.FC<Props> = ({ records, options }) => {
 
   return (
     <div className="tab-panel">
-      {/* Navigation bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button className="btn btn-outline" onClick={() => handleStep(-1)}>
-          <ChevronLeft size={16} />
-          <span>前へ</span>
-        </button>
-        <select
-          className="select-box"
-          style={{ width: 360 }}
-          value={selectedNo}
-          onChange={(e) => setSelectedNo(parseInt(e.target.value))}
-        >
-          {records.map((r) => (
-            <option key={r.No} value={r.No}>
-              No {r.No} ・ {r._label || `${r.依頼No} / ${r.項目名}`}
-            </option>
-          ))}
-        </select>
-        <button className="btn btn-outline" onClick={() => handleStep(1)}>
-          <span>次へ</span>
-          <ChevronRight size={16} />
-        </button>
-        {loading && <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>読込中…</span>}
+      {/* Navigation & Control bar */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 12,
+          padding: "0.5rem 0.75rem",
+          backgroundColor: "#fff",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button className="btn btn-outline btn-sm" onClick={() => handleStep(-1)}>
+            <ChevronLeft size={16} />
+            <span>前へ</span>
+          </button>
+          <select
+            className="select-box"
+            style={{ width: 340, padding: "0.25rem 0.5rem", fontSize: "0.8125rem" }}
+            value={selectedNo}
+            onChange={(e) => setSelectedNo(parseInt(e.target.value))}
+          >
+            {records.map((r) => (
+              <option key={r.No} value={r.No}>
+                No {r.No} ・ {r._label || `${r.依頼No} / ${r.項目名}`}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-outline btn-sm" onClick={() => handleStep(1)}>
+            <span>次へ</span>
+            <ChevronRight size={16} />
+          </button>
+          {loading && <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>読込中…</span>}
+        </div>
+
+        {/* Window Selector */}
+        <WindowSelector
+          isChromogenic={isChromogenic}
+          value={options.windowEndSec}
+          onChange={(val) => onChangeOptions({ windowEndSec: val })}
+        />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
@@ -227,9 +251,11 @@ export const TabDetail: React.FC<Props> = ({ records, options }) => {
             style={{ width: "100%", height: "100%" }}
             config={{ displaylogo: false, responsive: true }}
           />
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
-            縦線: 点線 = Tc1 / Te1、破線 = Tc2 / Te2、橙の実線 = 装置の測定値(CSV)
-          </div>
+          {!isChromogenic && (
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
+              縦線: 点線 = Tc1 / Te1、破線 = Tc2 / Te2、橙の実線 = 装置の測定値(CSV)
+            </div>
+          )}
         </div>
 
         {/* Right: Calculated values & Metadata */}
@@ -239,36 +265,59 @@ export const TabDetail: React.FC<Props> = ({ records, options }) => {
             <h3 style={{ fontSize: "0.875rem", fontWeight: 700, marginBottom: 8 }}>計算値</h3>
             <table style={{ width: "100%", fontSize: "0.8125rem", borderCollapse: "collapse" }}>
               <tbody>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc2</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Tc2 != null ? `${c.Tc2} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Te2</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Te2 != null ? `${c.Te2} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc1</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Tc1 != null ? `${c.Tc1} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Te1</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Te1 != null ? `${c.Te1} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>装置の測定値</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.device_val != null ? `${c.device_val} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc2 − 装置値</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{c.tc2_diff != null ? `${c.tc2_diff} s` : "–"}</td>
-                </tr>
-                <tr>
-                  <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>速度の最大</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>
-                    {c.vmax != null ? `${c.vmax} %/s (${c.t_vmax}s)` : "–"}
-                  </td>
-                </tr>
+                {!isChromogenic ? (
+                  <>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc2</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Tc2 != null ? `${c.Tc2} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Te2</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Te2 != null ? `${c.Te2} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc1</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Tc1 != null ? `${c.Tc1} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Te1</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.Te1 != null ? `${c.Te1} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>装置の測定値</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.device_val != null ? `${c.device_val} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>Tc2 − 装置値</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.tc2_diff != null ? `${c.tc2_diff} s` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>速度の最大</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {c.vmax != null ? `${c.vmax} %/s (${c.t_vmax}s)` : "–"}
+                      </td>
+                    </tr>
+                  </>
+                ) : (
+                  <>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>装置の測定値</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.device_val != null ? `${c.device_val}` : "–"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>速度の最大 (vmax)</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {c.vmax != null ? `${c.vmax} %/s` : "–"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>最大速度の時刻</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {c.t_vmax != null ? `${c.t_vmax} s` : "–"}
+                      </td>
+                    </tr>
+                  </>
+                )}
               </tbody>
             </table>
           </div>

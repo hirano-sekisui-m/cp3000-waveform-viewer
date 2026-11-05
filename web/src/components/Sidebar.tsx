@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Folder, Upload, Settings2, Sliders, RefreshCw } from "lucide-react";
+import { Folder, Upload, Settings2, Sliders, RefreshCw, X } from "lucide-react";
 import { FolderEntry } from "../types";
 
 export interface SidebarOptions {
@@ -19,6 +19,8 @@ export interface SidebarOptions {
 }
 
 interface Props {
+  isOpen: boolean;
+  onClose: () => void;
   options: SidebarOptions;
   onChangeOptions: (opts: Partial<SidebarOptions>) => void;
   folderEntries: FolderEntry[];
@@ -28,16 +30,23 @@ interface Props {
   availableModes: string[];
 }
 
-export const WAVE_TYPE_LABELS: Record<string, string> = {
+export const COAG_WAVE_TYPES: Record<string, string> = {
   raw: "生波形",
   scaled: "凝固波形 (最大=100%)",
   endpoint_scaled: "凝固波形 (終点=100%)",
   slope: "速度 (1次微分)",
   acceleration: "加速度 (2次微分)",
+};
+
+export const CHROMO_WAVE_TYPES: Record<string, string> = {
+  raw: "生波形 (0.1 mAbs)",
+  scaled: "吸光度変化 (0–100%)",
   abs_slope: "吸光度変化率 (mAbs/min.)",
 };
 
 export const Sidebar: React.FC<Props> = ({
+  isOpen,
+  onClose,
   options,
   onChangeOptions,
   folderEntries,
@@ -47,6 +56,9 @@ export const Sidebar: React.FC<Props> = ({
   availableModes,
 }) => {
   const [showCalcSettings, setShowCalcSettings] = useState(false);
+  const isChromogenic = options.selectedMode === "比色項目";
+
+  const waveTypeDict = isChromogenic ? CHROMO_WAVE_TYPES : COAG_WAVE_TYPES;
 
   const handleToggleWaveType = (type: string) => {
     const current = options.waveTypes;
@@ -66,7 +78,15 @@ export const Sidebar: React.FC<Props> = ({
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isOpen ? "" : "closed"}`}>
+      {/* Header of sidebar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 700, fontSize: "0.9375rem" }}>設定パネル</span>
+        <button className="btn btn-outline btn-sm" onClick={onClose} title="閉じる">
+          <X size={14} />
+        </button>
+      </div>
+
       {/* Source selector */}
       <div className="sidebar-section">
         <div className="sidebar-title">
@@ -146,9 +166,19 @@ export const Sidebar: React.FC<Props> = ({
           <select
             className="select-box"
             value={options.selectedMode}
-            onChange={(e) => onChangeOptions({ selectedMode: e.target.value })}
+            onChange={(e) => {
+              const newMode = e.target.value;
+              const newWaveTypes =
+                newMode === "比色項目"
+                  ? ["raw", "scaled", "abs_slope"]
+                  : ["raw", "scaled", "slope"];
+              onChangeOptions({
+                selectedMode: newMode,
+                waveTypes: newWaveTypes,
+                align: newMode === "比色項目" ? "off" : options.align,
+              });
+            }}
           >
-            <option value="">すべて</option>
             {availableModes.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -165,7 +195,7 @@ export const Sidebar: React.FC<Props> = ({
           <span>表示する波形</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {Object.entries(WAVE_TYPE_LABELS).map(([k, label]) => {
+          {Object.entries(waveTypeDict).map(([k, label]) => {
             const checked = options.waveTypes.includes(k);
             return (
               <label key={k} style={{ fontSize: "0.8125rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -188,23 +218,25 @@ export const Sidebar: React.FC<Props> = ({
           <span>時間軸と配置</span>
         </div>
 
-        <div>
-          <span className="sidebar-label">時間軸のそろえ方</span>
-          <select
-            className="select-box"
-            value={options.align}
-            onChange={(e) => onChangeOptions({ align: e.target.value })}
-          >
-            <option value="off">そろえない (測定時間)</option>
-            <option value="tc2">Tc2 を 0 秒に</option>
-            <option value="peak">速度ピークを 0 秒に</option>
-            <option value="rise">立ち上がり (10%) を 0 秒に</option>
-          </select>
-        </div>
+        {!isChromogenic && (
+          <div>
+            <span className="sidebar-label">時間軸のそろえ方</span>
+            <select
+              className="select-box"
+              value={options.align}
+              onChange={(e) => onChangeOptions({ align: e.target.value })}
+            >
+              <option value="off">測定時間 (そのまま)</option>
+              <option value="tc2">凝固時間 (Tc2) を 0 秒に</option>
+              <option value="peak">速度ピークを 0 秒に</option>
+              <option value="rise">立ち上がり (10%) を 0 秒に</option>
+            </select>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8 }}>
           <div style={{ flex: 1 }}>
-            <span className="sidebar-label">開始 (秒)</span>
+            <span className="sidebar-label">表示開始 (秒)</span>
             <input
               type="number"
               className="input-text"
@@ -214,7 +246,7 @@ export const Sidebar: React.FC<Props> = ({
             />
           </div>
           <div style={{ flex: 1 }}>
-            <span className="sidebar-label">終了 (秒)</span>
+            <span className="sidebar-label">表示終了 (秒)</span>
             <input
               type="number"
               className="input-text"
@@ -234,14 +266,18 @@ export const Sidebar: React.FC<Props> = ({
             />
             <span>生波形の開始値を 0 にそろえる</span>
           </label>
-          <label style={{ fontSize: "0.8125rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={options.showTc2}
-              onChange={(e) => onChangeOptions({ showTc2: e.target.checked })}
-            />
-            <span>Tc2 の位置に印を付ける</span>
-          </label>
+
+          {!isChromogenic && (
+            <label style={{ fontSize: "0.8125rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={options.showTc2}
+                onChange={(e) => onChangeOptions({ showTc2: e.target.checked })}
+              />
+              <span>Tc2 の位置に印を付ける</span>
+            </label>
+          )}
+
           <label style={{ fontSize: "0.8125rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -253,47 +289,39 @@ export const Sidebar: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Calc settings */}
-      <div className="sidebar-section" style={{ borderBottom: "none" }}>
-        <button
-          className="btn btn-outline btn-sm"
-          style={{ width: "100%", justifyContent: "space-between" }}
-          onClick={() => setShowCalcSettings(!showCalcSettings)}
-        >
-          <span>計算の設定</span>
-          <span>{showCalcSettings ? "▲" : "▼"}</span>
-        </button>
+      {/* Calc settings (Coagulation only) */}
+      {!isChromogenic && (
+        <div className="sidebar-section" style={{ borderBottom: "none" }}>
+          <button
+            className="btn btn-outline btn-sm"
+            style={{ width: "100%", justifyContent: "space-between" }}
+            onClick={() => setShowCalcSettings(!showCalcSettings)}
+          >
+            <span>計算の詳細設定</span>
+            <span>{showCalcSettings ? "▲" : "▼"}</span>
+          </button>
 
-        {showCalcSettings && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
-            <div>
-              <span className="sidebar-label">解析窓 (秒、空欄=全長)</span>
-              <input
-                type="number"
-                className="input-text"
-                placeholder="全長"
-                value={options.windowEndSec}
-                onChange={(e) => onChangeOptions({ windowEndSec: e.target.value })}
-              />
-            </div>
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="sidebar-label">Tc の判定割合</span>
-                <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>{options.coagRatio}</span>
+          {showCalcSettings && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="sidebar-label">Tc の判定割合</span>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>{options.coagRatio}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.9"
+                  step="0.05"
+                  style={{ width: "100%" }}
+                  value={options.coagRatio}
+                  onChange={(e) => onChangeOptions({ coagRatio: parseFloat(e.target.value) })}
+                />
               </div>
-              <input
-                type="range"
-                min="0.1"
-                max="0.9"
-                step="0.05"
-                style={{ width: "100%" }}
-                value={options.coagRatio}
-                onChange={(e) => onChangeOptions({ coagRatio: parseFloat(e.target.value) })}
-              />
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </aside>
   );
 };

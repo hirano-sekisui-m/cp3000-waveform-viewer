@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from "react";
 import Plot from "react-plotly.js";
-import { Download, Search, CheckSquare } from "lucide-react";
+import { Download, CheckSquare } from "lucide-react";
 import { BatchSummary, RecordItem, WaveformSeries } from "../types";
 import { deriveWaveforms, downloadWaveformsCsv } from "../api/client";
-import { SidebarOptions, WAVE_TYPE_LABELS } from "./Sidebar";
+import { CHROMO_WAVE_TYPES, COAG_WAVE_TYPES, SidebarOptions } from "./Sidebar";
+import { WindowSelector } from "./WindowSelector";
 
 interface Props {
   summary: BatchSummary;
   records: RecordItem[];
   options: SidebarOptions;
+  onChangeOptions: (opts: Partial<SidebarOptions>) => void;
 }
 
-// Distinct 8-color palette
 const PALETTE = [
   "#2563eb", // blue
   "#dc2626", // red
@@ -23,16 +24,26 @@ const PALETTE = [
   "#475569", // slate
 ];
 
-export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
+export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChangeOptions }) => {
   const [selectedPositions, setSelectedPositions] = useState<number[]>([]);
   const [seriesData, setSeriesData] = useState<WaveformSeries[]>([]);
   const [loading, setLoading] = useState(false);
   const [downloadKind, setDownloadKind] = useState("raw");
 
-  // Auto-select first 5 records initially
+  const isChromogenic = options.selectedMode === "比色項目";
+  const waveTypeDict = isChromogenic ? CHROMO_WAVE_TYPES : COAG_WAVE_TYPES;
+
+  // Auto-select first 5 records initially or when records change
   useEffect(() => {
-    if (records.length > 0 && selectedPositions.length === 0) {
-      setSelectedPositions(records.slice(0, Math.min(5, records.length)).map((r) => r._pos));
+    if (records.length > 0) {
+      const validSelected = selectedPositions.filter((p) => records.some((r) => r._pos === p));
+      if (validSelected.length === 0) {
+        setSelectedPositions(records.slice(0, Math.min(5, records.length)).map((r) => r._pos));
+      } else {
+        setSelectedPositions(validSelected);
+      }
+    } else {
+      setSelectedPositions([]);
     }
   }, [records]);
 
@@ -101,8 +112,8 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
   };
 
   // Build Plotly layout and traces
-  const waveTypes = options.waveTypes;
-  const numPanels = waveTypes.length;
+  const waveTypes = options.waveTypes.filter((t) => t in waveTypeDict);
+  const numPanels = Math.max(1, waveTypes.length);
 
   const traces: any[] = [];
 
@@ -137,8 +148,8 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
         hovertemplate: `<b>%{y:.2f}</b><extra>${s.label}</extra>`,
       });
 
-      // Tc2 marker on panels
-      if (options.showTc2 && s.tc2 != null && isFinite(s.tc2)) {
+      // Tc2 marker on panels (Coagulation only)
+      if (!isChromogenic && options.showTc2 && s.tc2 != null && isFinite(s.tc2)) {
         traces.push({
           type: "scattergl",
           mode: "markers",
@@ -154,7 +165,6 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
     });
   });
 
-  // Calculate layout for subplots
   const layout: any = {
     autosize: true,
     height: Math.max(500, numPanels * 220),
@@ -169,13 +179,14 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
   waveTypes.forEach((kind, panelIdx) => {
     const yKey = panelIdx === 0 ? "yaxis" : `yaxis${panelIdx + 1}`;
     layout[yKey] = {
-      title: { text: WAVE_TYPE_LABELS[kind] || kind, font: { size: 11 } },
+      title: { text: waveTypeDict[kind] || kind, font: { size: 11 } },
       gridcolor: "#f1f5f9",
       zerolinecolor: "#cbd5e1",
     };
   });
 
-  const xAxisTitle = options.align === "off" ? "時間 (秒)" : "そろえた時間 (秒)";
+  const xAxisTitle =
+    isChromogenic || options.align === "off" ? "測定時間 (秒)" : "そろえた時間 (秒)";
   layout.xaxis = {
     title: { text: xAxisTitle, font: { size: 12 } },
     gridcolor: "#f1f5f9",
@@ -210,7 +221,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
                   <th style={{ width: 40 }}>No</th>
                   <th>依頼No</th>
                   <th>項目名</th>
-                  <th>Tc2</th>
+                  <th>{isChromogenic ? "処理値" : "Tc2"}</th>
                   <th>測定値</th>
                 </tr>
               </thead>
@@ -227,7 +238,11 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
                       <td>{r.No}</td>
                       <td>{r.依頼No || r.内部依頼No || "–"}</td>
                       <td>{r.項目名 || "–"}</td>
-                      <td>{r["Tc2(計算)"] != null ? r["Tc2(計算)"] : "–"}</td>
+                      <td>
+                        {isChromogenic
+                          ? (r.処理値 != null ? r.処理値 : "–")
+                          : (r["Tc2(計算)"] != null ? r["Tc2(計算)"] : "–")}
+                      </td>
                       <td>{r.測定値 != null ? r.測定値 : "–"}</td>
                     </tr>
                   );
@@ -242,20 +257,39 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options }) => {
 
         {/* Right: Waveform Chart */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>
-              重ね描き表示 ({selectedPositions.length} 本選択中) {loading ? "計算中…" : ""}
-            </span>
+          {/* Top Control Bar directly above the chart */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+              padding: "0.5rem 0.75rem",
+              backgroundColor: "#fff",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            {/* Window selector placed right above chart */}
+            <WindowSelector
+              isChromogenic={isChromogenic}
+              value={options.windowEndSec}
+              onChange={(val) => onChangeOptions({ windowEndSec: val })}
+            />
 
             {/* CSV Download bar */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                {selectedPositions.length} 本選択中 {loading ? "(計算中…)" : ""}
+              </span>
               <select
                 className="select-box"
-                style={{ width: "auto" }}
+                style={{ width: "auto", padding: "0.2rem 0.5rem", fontSize: "0.8125rem" }}
                 value={downloadKind}
                 onChange={(e) => setDownloadKind(e.target.value)}
               >
-                {Object.entries(WAVE_TYPE_LABELS).map(([k, lbl]) => (
+                {Object.entries(waveTypeDict).map(([k, lbl]) => (
                   <option key={k} value={k}>
                     {lbl}
                   </option>

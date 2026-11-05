@@ -1,12 +1,14 @@
 import React from "react";
 import { BatchSummary } from "../types";
-import { Check, AlertCircle } from "lucide-react";
+import { Check, AlertCircle, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 interface Props {
   summary: BatchSummary | null;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }
 
-export const Header: React.FC<Props> = ({ summary }) => {
+export const Header: React.FC<Props> = ({ summary, sidebarOpen, onToggleSidebar }) => {
   if (!summary) return null;
 
   const profFile = summary.files.find((f) => f.kind === "prof");
@@ -15,11 +17,21 @@ export const Header: React.FC<Props> = ({ summary }) => {
 
   return (
     <header style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1 style={{ fontSize: "1.5rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
           <span>📈</span>
           <span>{summary.name}</span>
         </h1>
+
+        <button
+          className="btn btn-outline btn-sm"
+          onClick={onToggleSidebar}
+          title={sidebarOpen ? "サイドバーを閉じる" : "サイドバーを開く"}
+          style={{ gap: 6 }}
+        >
+          {sidebarOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+          <span>{sidebarOpen ? "設定を閉じる" : "設定を開く"}</span>
+        </button>
       </div>
 
       {/* Chips */}

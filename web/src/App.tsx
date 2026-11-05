@@ -11,7 +11,6 @@ import {
   listFolders,
   loadBatch,
   uploadBatchFiles,
-  getBatchSummary,
   queryRecords,
 } from "./api/client";
 
@@ -32,6 +31,7 @@ export const App: React.FC = () => {
     coagRatio: 0.5,
   });
 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [folderEntries, setFolderEntries] = useState<FolderEntry[]>([]);
   const [summary, setSummary] = useState<BatchSummary | null>(null);
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -59,6 +59,24 @@ export const App: React.FC = () => {
       });
   }, []);
 
+  const autoSelectMode = (modes: string[]): { mode: string; waveTypes: string[] } => {
+    if (modes.length === 1) {
+      const single = modes[0];
+      return {
+        mode: single,
+        waveTypes: single === "比色項目" ? ["raw", "scaled", "abs_slope"] : ["raw", "scaled", "slope"],
+      };
+    }
+    if (modes.includes("比色項目") && !modes.includes("凝固項目")) {
+      return { mode: "比色項目", waveTypes: ["raw", "scaled", "abs_slope"] };
+    }
+    const defaultMode = modes[0] || "凝固項目";
+    return {
+      mode: defaultMode,
+      waveTypes: defaultMode === "比色項目" ? ["raw", "scaled", "abs_slope"] : ["raw", "scaled", "slope"],
+    };
+  };
+
   const handleRefreshFolders = async () => {
     try {
       const folders = await listFolders(options.rootPath);
@@ -77,8 +95,17 @@ export const App: React.FC = () => {
     try {
       const sum = await loadBatch({ folder_path: folderPath });
       setSummary(sum);
-      setOptions((prev) => ({ ...prev, selectedBatchFolder: folderPath }));
-      await fetchRecords(sum, options.selectedMode);
+
+      const auto = autoSelectMode(sum.modes);
+      setOptions((prev) => ({
+        ...prev,
+        selectedBatchFolder: folderPath,
+        selectedMode: auto.mode,
+        waveTypes: auto.waveTypes,
+        align: auto.mode === "比色項目" ? "off" : prev.align,
+      }));
+
+      await fetchRecords(sum, auto.mode);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -92,7 +119,16 @@ export const App: React.FC = () => {
     try {
       const sum = await uploadBatchFiles(files);
       setSummary(sum);
-      await fetchRecords(sum, options.selectedMode);
+
+      const auto = autoSelectMode(sum.modes);
+      setOptions((prev) => ({
+        ...prev,
+        selectedMode: auto.mode,
+        waveTypes: auto.waveTypes,
+        align: auto.mode === "比色項目" ? "off" : prev.align,
+      }));
+
+      await fetchRecords(sum, auto.mode);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -123,21 +159,16 @@ export const App: React.FC = () => {
 
     if (partial.selectedMode !== undefined && summary) {
       fetchRecords(summary, partial.selectedMode);
+    } else if (partial.windowEndSec !== undefined || partial.coagRatio !== undefined) {
+      if (summary) {
+        fetchRecords(summary, updated.selectedMode);
+      }
     }
   };
 
   return (
     <div className="app-container">
-      <Sidebar
-        options={options}
-        onChangeOptions={handleChangeOptions}
-        folderEntries={folderEntries}
-        onRefreshFolders={handleRefreshFolders}
-        onSelectFolder={handleLoadBatch}
-        onUploadFiles={handleUploadFiles}
-        availableModes={summary?.modes || []}
-      />
-
+      {/* Main Content Area (Left side) */}
       <main className="main-content">
         {errorMsg && (
           <div
@@ -154,7 +185,11 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        <Header summary={summary} />
+        <Header
+          summary={summary}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        />
 
         {/* Tab Navigation */}
         <div className="tabs-nav">
@@ -182,10 +217,20 @@ export const App: React.FC = () => {
         {summary && records.length > 0 ? (
           <>
             {activeTab === "overlay" && (
-              <TabOverlay summary={summary} records={records} options={options} />
+              <TabOverlay
+                summary={summary}
+                records={records}
+                options={options}
+                onChangeOptions={handleChangeOptions}
+              />
             )}
             {activeTab === "detail" && (
-              <TabDetail summary={summary} records={records} options={options} />
+              <TabDetail
+                summary={summary}
+                records={records}
+                options={options}
+                onChangeOptions={handleChangeOptions}
+              />
             )}
             {activeTab === "info" && <TabInfo summary={summary} records={records} />}
           </>
@@ -199,10 +244,23 @@ export const App: React.FC = () => {
               color: "var(--text-muted)",
             }}
           >
-            {loading ? "バッチを読み込み中…" : "左のサイドバーでバッチを選択してください"}
+            {loading ? "バッチを読み込み中…" : "右の設定パネルでバッチを選択してください"}
           </div>
         )}
       </main>
+
+      {/* Sidebar (Right side, collapsible) */}
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        options={options}
+        onChangeOptions={handleChangeOptions}
+        folderEntries={folderEntries}
+        onRefreshFolders={handleRefreshFolders}
+        onSelectFolder={handleLoadBatch}
+        onUploadFiles={handleUploadFiles}
+        availableModes={summary?.modes || []}
+      />
     </div>
   );
 };
