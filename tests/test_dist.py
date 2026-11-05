@@ -89,11 +89,12 @@ def built_zips() -> tuple[Path, Path]:
 def extracted_jp_dir(tmp_path_factory, built_zips) -> Path:
     """Extract full zip into a directory containing spaces and Japanese characters."""
     full_zip, _ = built_zips
-    base = tmp_path_factory.mktemp("dist_test") / "空白 と 日本語 フォルダ"
-    base.mkdir(parents=True, exist_ok=True)
+    pkg_dir = tmp_path_factory.mktemp("dist_test") / "空白 と 日本語 フォルダ" / "CP3000Viewer"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(full_zip, "r") as zf:
-        zf.extractall(base)
-    pkg_dir = base / "CP3000Viewer"
+        zf.extractall(pkg_dir)
+    if (pkg_dir / "CP3000Viewer" / "start_viewer.bat").is_file():
+        pkg_dir = pkg_dir / "CP3000Viewer"
     assert (pkg_dir / "runtime" / "python.exe").is_file()
     assert (pkg_dir / "app" / "app.py").is_file()
     assert (pkg_dir / "start_viewer.bat").is_file()

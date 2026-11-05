@@ -217,7 +217,7 @@ def prune_site_packages(site_packages: Path) -> None:
     removed_files = 0
 
     # Directories safe to remove (preserving streamlit/testing and pandas/_testing)
-    prune_dir_names = {"tests", "test", "include", "share", "nbextension", "labextension"}
+    prune_dir_names = {"tests", "test", "include", "share", "nbextension", "labextension", ".agents", "licenses", "__pycache__"}
     for root, dirs, _ in os.walk(site_packages, topdown=True):
         root_p = Path(root)
         rel_parts = root_p.relative_to(site_packages).parts
@@ -232,8 +232,8 @@ def prune_site_packages(site_packages: Path) -> None:
                 dirs.remove(d)
                 removed_dirs += 1
 
-    # Remove static libraries, C/Cython sources, JS source maps, and debug symbols
-    prune_exts = {".pdb", ".lib", ".a", ".c", ".cpp", ".cc", ".h", ".hpp", ".pyx", ".pxd", ".map"}
+    # Remove static libraries, C/Cython sources, JS source maps, .pyc, and debug symbols
+    prune_exts = {".pdb", ".lib", ".a", ".c", ".cpp", ".cc", ".h", ".hpp", ".pyx", ".pxd", ".map", ".pyc"}
     for p in list(site_packages.rglob("*")):
         if p.is_file() and p.suffix.lower() in prune_exts:
             try:
@@ -319,14 +319,13 @@ def place_root_and_user_files(
 
 
 def precompile_bytecode(pkg_root: Path, runtime_python: Path) -> None:
-    print("[7/8] Pre-compiling bytecode with compileall ...")
+    print("[7/8] Pre-compiling app bytecode with compileall ...")
     subprocess.run(
         [
             str(runtime_python),
             "-m",
             "compileall",
             "-q",
-            str(pkg_root / "runtime" / "Lib" / "site-packages"),
             str(pkg_root / "app"),
             str(pkg_root / "runtime" / "viewer_ctl.py"),
         ],
@@ -345,6 +344,7 @@ def verify_bundle(pkg_root: Path, runtime_python: Path, expected_version: str) -
     print("[8/8] Verifying bundle (isolated imports + Streamlit health check) ...")
     env = clean_env()
     env["CP3000_SETTINGS"] = str(pkg_root / "user" / "settings.json")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     # 1. Verify imports
     check_code = (
@@ -415,26 +415,39 @@ def verify_bundle(pkg_root: Path, runtime_python: Path, expected_version: str) -
     (pkg_root / "user" / "settings.json").write_bytes(b"{}\r\n")
 
 
-def make_zip_from_dir(source_dir: Path, zip_path: Path, include_top: bool = True) -> None:
+def make_zip_from_dir(source_dir: Path, zip_path: Path, include_top: bool = False) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     if zip_path.exists():
         zip_path.unlink()
     base = source_dir.parent if include_top else source_dir
+
+    def _entry_priority(p: Path) -> tuple[int, str]:
+        rel = p.relative_to(source_dir)
+        parts = rel.parts
+        if len(parts) == 1:
+            return (0, rel.as_posix().lower())
+        if parts[0] == "user":
+            return (1, rel.as_posix().lower())
+        if parts[0] == "app":
+            return (2, rel.as_posix().lower())
+        return (3, rel.as_posix().lower())
+
+    all_files = [p for p in source_dir.rglob("*") if p.is_file()]
+    all_files.sort(key=_entry_priority)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for p in sorted(source_dir.rglob("*")):
-            if p.is_file():
-                zf.write(p, p.relative_to(base))
+        for p in all_files:
+            zf.write(p, p.relative_to(base))
 
 
-def make_app_zip(pkg_root: Path, zip_path: Path) -> None:
+def make_app_zip(pkg_root: Path, zip_path: Path, include_top: bool = False) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     if zip_path.exists():
         zip_path.unlink()
-    base = pkg_root.parent
+    base = pkg_root.parent if include_top else pkg_root
     items = [
+        pkg_root / "README.txt",
         pkg_root / "start_viewer.bat",
         pkg_root / "update_viewer.bat",
-        pkg_root / "README.txt",
         pkg_root / "VERSION.txt",
     ]
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
@@ -486,8 +499,8 @@ def build(
     latest_txt = out_dir / "latest.txt"
 
     print(f"Creating {full_zip.name} and {app_zip.name} ...")
-    make_zip_from_dir(pkg_root, full_zip, include_top=True)
-    make_app_zip(pkg_root, app_zip)
+    make_zip_from_dir(pkg_root, full_zip, include_top=False)
+    make_app_zip(pkg_root, app_zip, include_top=False)
     latest_txt.write_bytes(f"app={version} runtime={runtime_version}\r\n".encode("utf-8"))
 
     full_mb = full_zip.stat().st_size / (1024 * 1024)
