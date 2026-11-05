@@ -3,7 +3,7 @@
 Functions are copied verbatim from CWA-ML-tool (commit a591105):
 src/cwa/signal/{filters,cumulative,slope}.py, src/cwa/coagulation/{tetc,trimming}.py and
 src/cwa/plotting/waveforms.py (align_waveform_time). Only the repo's feature-registry decorator
-on ``search_te_tc`` is removed. ``derive_record`` at the bottom follows
+on ``search_te_tc`` is removed. ``derive_batch`` at the bottom follows
 src/cwa/signal/derive.py::derive_waveforms (the 01 batch steps) for numpy arrays.
 """
 
@@ -258,21 +258,31 @@ def calculate_slope_fast(
 
     td = np.asarray(time_data, dtype=float)
     diffs = np.diff(td)
-    dt = float(diffs[np.isfinite(diffs)][0]) if np.isfinite(diffs).any() else 1.0
-
-    x = np.arange(-half, half + 1, dtype=float)
-    denom = np.sum(x * x) * dt
+    fin_diffs = diffs[np.isfinite(diffs)]
 
     fin = np.isfinite(y).astype(int)
     fin_win = sliding_window_view(fin, window_shape=w).sum(axis=1)
     all_ok = fin_win == w
-
     y0 = np.nan_to_num(y, nan=0.0)
-    xy = np.convolve(y0, x[::-1], mode="valid")
 
-    slope_center = np.full(xy.shape, np.nan)
-    if all_ok.any():
-        slope_center[all_ok] = xy[all_ok] / denom
+    if fin_diffs.size == 0 or np.allclose(fin_diffs, fin_diffs[0], rtol=1e-4, atol=1e-6):
+        dt = float(fin_diffs[0]) if fin_diffs.size > 0 else 1.0
+        x = np.arange(-half, half + 1, dtype=float)
+        denom = np.sum(x * x) * dt
+        xy = np.convolve(y0, x[::-1], mode="valid")
+        slope_center = np.full(xy.shape, np.nan)
+        if all_ok.any() and denom != 0:
+            slope_center[all_ok] = xy[all_ok] / denom
+    else:
+        t_win = sliding_window_view(td, window_shape=w)
+        t_c = t_win - t_win.mean(axis=-1, keepdims=True)
+        denom_arr = np.sum(t_c * t_c, axis=-1)
+        y_win = sliding_window_view(y0, window_shape=w)
+        xy = np.einsum("nk,nk->n", y_win, t_c)
+        slope_center = np.full(xy.shape, np.nan)
+        valid = all_ok & np.isfinite(denom_arr) & (denom_arr > 0)
+        if valid.any():
+            slope_center[valid] = xy[valid] / denom_arr[valid]
 
     out = np.full(n, np.nan)
     out[half : half + slope_center.size] = slope_center
@@ -295,19 +305,38 @@ def slope_batch(
         return out
     td = np.asarray(time_data, dtype=float)
     diffs = np.diff(td)
-    dt = float(diffs[np.isfinite(diffs)][0]) if np.isfinite(diffs).any() else 1.0
-    x = np.arange(-half, half + 1, dtype=float)
-    denom = np.sum(x * x) * dt
-    for start in range(0, arr2d.shape[0], batch_size):
-        end = min(start + batch_size, arr2d.shape[0])
-        block = arr2d[start:end]
-        win = sliding_window_view(block, window_shape=w, axis=1)
-        ok = np.isfinite(win).all(axis=-1)
-        vals = np.full(ok.shape, np.nan)
-        vals[ok] = (
-            np.einsum("rnk,k->rn", np.nan_to_num(win, nan=0.0), x)[ok] / denom
-        )
-        out[start:end, half : half + vals.shape[1]] = vals
+    fin_diffs = diffs[np.isfinite(diffs)]
+    uniform_dt = fin_diffs.size == 0 or np.allclose(fin_diffs, fin_diffs[0], rtol=1e-4, atol=1e-6)
+    if uniform_dt:
+        dt = float(fin_diffs[0]) if fin_diffs.size > 0 else 1.0
+        x = np.arange(-half, half + 1, dtype=float)
+        denom = np.sum(x * x) * dt
+        for start in range(0, arr2d.shape[0], batch_size):
+            end = min(start + batch_size, arr2d.shape[0])
+            block = arr2d[start:end]
+            win = sliding_window_view(block, window_shape=w, axis=1)
+            ok = np.isfinite(win).all(axis=-1)
+            vals = np.full(ok.shape, np.nan)
+            if denom != 0:
+                vals[ok] = (
+                    np.einsum("rnk,k->rn", np.nan_to_num(win, nan=0.0), x)[ok] / denom
+                )
+            out[start:end, half : half + vals.shape[1]] = vals
+    else:
+        t_win = sliding_window_view(td, window_shape=w)
+        t_c = t_win - t_win.mean(axis=-1, keepdims=True)
+        denom_arr = np.sum(t_c * t_c, axis=-1)
+        valid_t = np.isfinite(t_win).all(axis=-1) & (denom_arr > 0)
+        for start in range(0, arr2d.shape[0], batch_size):
+            end = min(start + batch_size, arr2d.shape[0])
+            block = arr2d[start:end]
+            win = sliding_window_view(block, window_shape=w, axis=1)
+            ok = np.isfinite(win).all(axis=-1) & valid_t[None, :]
+            vals = np.full(ok.shape, np.nan)
+            if ok.any():
+                num = np.einsum("rnk,nk->rn", np.nan_to_num(win, nan=0.0), t_c)
+                vals[ok] = num[ok] / np.broadcast_to(denom_arr[None, :], ok.shape)[ok]
+            out[start:end, half : half + vals.shape[1]] = vals
     return out
 
 
@@ -593,7 +622,7 @@ def time_axis(n_points: int, step: float = TIME_STEP_SEC) -> np.ndarray:
 
 @dataclass
 class Derived:
-    """Derived waveforms for N records on one time axis, and Te/Tc per record."""
+    """Derived waveforms for N records on one (or per-record) time axis, and Te/Tc per record."""
 
     time: np.ndarray
     raw: np.ndarray
@@ -602,7 +631,92 @@ class Derived:
     endpoint_scaled: np.ndarray   # 0-100 % (last point = 100)
     slope: np.ndarray             # 1st derivative of ``scaled`` (%/s)
     acceleration: np.ndarray      # 2nd derivative (%/s^2), slope of ``slope``
-    tetc: pd.DataFrame            # Te1, Tc1, Te2, Tc2, Te1_Tc1, Te2_Tc2
+    tetc: pd.DataFrame            # Te1, Tc1, Te1_Tc1, Te2, Tc2, Te2_Tc2
+    times: Optional[ list[np.ndarray] ] = None
+
+    def time_at(self, k: int) -> np.ndarray:
+        """Return the time axis of record ``k`` (supports variable time intervals per record)."""
+        if self.times is not None and 0 <= k < len(self.times):
+            return self.times[k]
+        return self.time
+
+
+def _derive_csv_profile_batch(
+    raw2d: np.ndarray,
+    time_data: np.ndarray,
+    dt: float,
+    *,
+    coag_ratio: float = 0.5,
+    do_trim: bool = False,
+    batch_size: int = 100,
+) -> Derived:
+    """Derive 0-100 %, velocity, acceleration and Te/Tc from CSV profiles of any time interval.
+
+    Section 2 (ﾌﾟﾛﾌｧｲﾙ) of CP3000 CSV files stores baseline-subtracted absorbance changes on a
+    time grid whose interval varies by measurement mode (e.g. 0.5s, 1.4s, 2.8s, 4.8s, etc.).
+    Interpolating onto the 0.1 s grid for ``search_te_tc`` preserves the standard 2.0 s ratio
+    window regardless of the input interval, while keeping the plotted series on ``time_data``.
+    """
+    n_rows, n_cols = raw2d.shape
+    cumulative = np.where(np.isfinite(raw2d), np.maximum(raw2d, 0.0), np.nan)
+
+    fin_t = time_data[np.isfinite(time_data)]
+    n_fine = int(round(float(fin_t[-1]) / TIME_STEP_SEC)) if fin_t.size > 0 else 0
+    if n_fine > 0 and n_cols >= 2:
+        t_fine = time_axis(n_fine)
+        cum_fine = np.full((n_rows, len(t_fine)), np.nan)
+        for r_idx in range(n_rows):
+            row = cumulative[r_idx]
+            fin = np.flatnonzero(np.isfinite(row) & np.isfinite(time_data))
+            if fin.size >= 2:
+                t_valid = time_data[fin]
+                v_valid = row[fin]
+                in_range = (t_fine >= t_valid[0]) & (t_fine <= t_valid[-1])
+                cum_fine[r_idx, in_range] = np.interp(t_fine[in_range], t_valid, v_valid)
+        ratio_fine = ratio_batch(cum_fine, points=RATIO_POINTS, batch_size=batch_size)
+        tetc = search_te_tc(
+            cumulative_array=cum_fine,
+            ratio_array=ratio_fine,
+            time_data=t_fine,
+            coag_ratio=coag_ratio,
+            te_tc_cutoff=1.8,
+        )
+        tetc_df = tetc.to_dataframe()
+    else:
+        nan = np.full(n_rows, np.nan)
+        tetc_df = pd.DataFrame({k: nan for k in ["Te1", "Tc1", "Te1_Tc1", "Te2", "Tc2", "Te2_Tc2"]})
+
+    if do_trim:
+        coarse_end: list[int | None] = []
+        for te2_val in tetc_df["Te2"].to_numpy(float):
+            if np.isfinite(te2_val):
+                idx_c = int(np.searchsorted(time_data, float(te2_val), side="right") - 1)
+                coarse_end.append(max(0, idx_c))
+            else:
+                coarse_end.append(None)
+        trimmed = apply_te2_trimming(cumulative, coarse_end, inplace=False)
+    else:
+        trimmed = cumulative
+
+    scaled = normalize_max_100(trimmed)
+    half = max(1, int(round(SLOPE_HALF * TIME_STEP_SEC / max(dt, 1e-6))))
+    slope = slope_batch(time_data, scaled, half=half, batch_size=batch_size)
+    core = window_all_finite_mask_2d(scaled, left=half, right=half)
+    mask = core & np.isfinite(raw2d)
+    slope[~mask] = np.nan
+    head_zero_inplace(slope, mask)
+    acceleration = slope_batch(time_data, slope, half=half, batch_size=batch_size)
+
+    return Derived(
+        time=time_data,
+        raw=raw2d,
+        cumulative=trimmed,
+        scaled=scaled,
+        endpoint_scaled=normalize_endpoint_100(trimmed),
+        slope=slope,
+        acceleration=acceleration,
+        tetc=tetc_df,
+    )
 
 
 def derive_batch(
@@ -613,6 +727,7 @@ def derive_batch(
     coag_ratio: float = 0.5,
     do_trim: bool = False,
     batch_size: int = 100,
+    is_csv_profile: Optional[bool] = None,
 ) -> Derived:
     """Moving average -> diff -> median -> cumulative -> Te/Tc -> 0-100 % -> slope -> acceleration."""
     raw2d = np.asarray(raw2d, dtype=float)
@@ -630,7 +745,20 @@ def derive_batch(
         tetc = pd.DataFrame({k: nan for k in ["Te1", "Tc1", "Te1_Tc1", "Te2", "Tc2", "Te2_Tc2"]})
         return Derived(time_data, raw2d, empty, empty, empty, empty, empty, tetc)
 
-    work =moving_average_batch(raw2d, AnF=4, AnB=4, batch_size=batch_size)
+    diffs = np.diff(time_data)
+    fin_diffs = diffs[np.isfinite(diffs)]
+    dt = float(np.median(fin_diffs)) if fin_diffs.size > 0 else TIME_STEP_SEC
+    if is_csv_profile is None:
+        # prof*.dat always uses 0.1 s steps starting at 0.1 s; CSV profiles start at 0.0 s or use variable dt
+        starts_at_zero = time_data.size > 0 and np.isclose(time_data[0], 0.0, atol=1e-6)
+        non_prof_step = fin_diffs.size > 0 and not np.allclose(fin_diffs, TIME_STEP_SEC, atol=1e-3)
+        is_csv_profile = bool(starts_at_zero or non_prof_step)
+    if is_csv_profile:
+        return _derive_csv_profile_batch(
+            raw2d, time_data, dt, coag_ratio=coag_ratio, do_trim=do_trim, batch_size=batch_size
+        )
+
+    work = moving_average_batch(raw2d, AnF=4, AnB=4, batch_size=batch_size)
     diff = adjacent_diff(work)
     med = median_batch(diff, Mn=MEDIAN_HALF, batch_size=batch_size)
     cumulative = cumulative_batch(med)
