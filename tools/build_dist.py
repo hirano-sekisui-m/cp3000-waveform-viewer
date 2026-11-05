@@ -289,6 +289,9 @@ def copy_app_and_build_demo(pkg_root: Path, runtime_python: Path, app_version: s
         env=clean_env(),
         check=True,
     )
+    sample_csv = ROOT / "demo_data" / "250326CSV_data.csv"
+    if sample_csv.is_file():
+        shutil.copy2(sample_csv, demo_dir / sample_csv.name)
 
 
 def place_root_and_user_files(
