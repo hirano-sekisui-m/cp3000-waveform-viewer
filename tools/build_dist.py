@@ -268,6 +268,20 @@ def copy_app_and_build_demo(pkg_root: Path, runtime_python: Path, app_version: s
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         dirs_exist_ok=True,
     )
+    if (ROOT / "api").is_dir():
+        shutil.copytree(
+            ROOT / "api",
+            app_dir / "api",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            dirs_exist_ok=True,
+        )
+    if (ROOT / "web" / "dist").is_dir():
+        shutil.copytree(
+            ROOT / "web" / "dist",
+            app_dir / "web" / "dist",
+            dirs_exist_ok=True,
+        )
+
     if app_version != read_app_version():
         init_file = app_dir / "cp3000" / "__init__.py"
         text = init_file.read_text(encoding="utf-8")
@@ -303,7 +317,10 @@ def place_root_and_user_files(
     print("[6/8] Writing launcher bat files, README.txt, VERSION.txt, and user/ defaults ...")
     sync_dist_files_templates()
     shutil.copy2(DIST_FILES_DIR / "start_viewer.bat", pkg_root / "start_viewer.bat")
+    if (DIST_FILES_DIR / "start_viewer_react.bat").is_file():
+        shutil.copy2(DIST_FILES_DIR / "start_viewer_react.bat", pkg_root / "start_viewer_react.bat")
     shutil.copy2(DIST_FILES_DIR / "update_viewer.bat", pkg_root / "update_viewer.bat")
+
 
     readme_text = (DIST_FILES_DIR / "README.txt").read_text(encoding="utf-8")
     (pkg_root / "README.txt").write_bytes(readme_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
