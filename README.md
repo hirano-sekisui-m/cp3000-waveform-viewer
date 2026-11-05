@@ -5,22 +5,58 @@ CWA-ML-tool から、生データの読込と波形計算の部分だけを切�
 
 ## 起動
 
-`run_viewer.bat` をダブルクリックします。初回だけ `.venv` を作って必要なライブラリを入れます。
-ブラウザで http://localhost:8510 が開きます。
+本アプリは、**React + FastAPI の 3層構成（新UI）** と **従来の Streamlit 版** の両方に対応しています。
 
-手動で起動する場合:
+### 1. React + FastAPI 版（新UI・推奨）
+
+#### bat から起動する場合
+`run_viewer_react.bat` をダブルクリックします。ブラウザで http://localhost:8000 が開きます。
+
+#### ターミナルから手動で起動する場合 (通常起動)
+FastAPI がビルド済み React 画面を同時に配信するため、単一コマンドで動作します。
 
 ```bat
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+ブラウザで **http://localhost:8000** を開きます（API ドキュメントは http://localhost:8000/docs）。
+
+> ※ React 側のコード (`web/src/`) を変更した場合は、`cd web && npm run build && cd ..` で再ビルドすると反映されます。
+
+#### フロントエンド開発モード (React のホットリロード)
+画面コードを編集しながら即座にブラウザ反映（HMR）させたい場合は、ターミナルを 2 つ開いて実行します。
+
+- **ターミナル 1 (API サーバー):**
+  ```bat
+  .venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+  ```
+- **ターミナル 2 (Vite 開発サーバー):**
+  ```bat
+  cd web
+  npm run dev
+  ```
+ブラウザで **http://localhost:5173** を開きます（API リクエストはポート 8000 へ自動中継されます）。
+
+---
+
+### 2. Streamlit 版（従来UI）
+
+#### bat から起動する場合
+`run_viewer.bat` をダブルクリックします。ブラウザで http://localhost:8510 が開きます。
+
+#### ターミナルから手動で起動する場合
+```bat
 .venv\Scripts\python -m streamlit run app.py
 ```
+ブラウザで **http://localhost:8510** を開きます。
+
+---
 
 データなしで試す場合は、合成データを作ってから起動します(値はすべて架空)。
 
 ```bat
 .venv\Scripts\python tools\make_demo_batch.py
 ```
+
 
 ## できること
 
@@ -50,15 +86,25 @@ CWA-ML-tool の 01 バッチ(`cwa.signal.derive.derive_waveforms`)と同じ手�
 ## フォルダ構成
 
 ```
-app.py                  Streamlit アプリ
-cp3000/
+web/                    React + TypeScript (画面UI層)
+  src/                  React コンポーネント・チャート描画
+  dist/                 本番用静的ビルド成果物
+api/                    FastAPI (薄い API 層)
+  routes/               エンドポイント (バッチ・波形計算・エクスポート・設定)
+  schemas/              Pydantic リクエスト/レスポンスモデル
+  services/             セッション・インメモリキャッシュ管理
+cp3000/                 計算コア (波形計算・ファイル読込)
   prof.py               prof*.dat の読込(3600 / 6000 点を自動判定)
   log.py                LOG*.dat の解析(依頼情報・サンプリング情報)
   batch.py              CSV の読込と 3 ファイルの突合、フォルダの探索
   signal.py             移動平均・累積・速度・加速度、Te/Tc
-  plots.py              Plotly の図
+  plots.py              Plotly の図 (Streamlit 用)
+app.py                  Streamlit アプリ (併行維持)
+run_viewer_react.bat    React + FastAPI 版の起動 bat
+run_viewer.bat          Streamlit 版の起動 bat
 dist_files/
-  start_viewer.bat      配布パッケージ用の起動 bat(Shift-JIS)
+  start_viewer_react.bat 配布パッケージ用の React 版起動 bat
+  start_viewer.bat      配布パッケージ用の Streamlit 版起動 bat
   update_viewer.bat     配布パッケージ用の更新 bat(Shift-JIS)
   viewer_ctl.py         起動・ヘルスチェック・差分更新スクリプト
   README.txt            利用者向けの使い方説明書
@@ -69,8 +115,10 @@ tools/
   check_against_cwa.py  元の CWA-ML-tool のコードと結果が一致するかの確認
 tests/
   test_viewer.py        波形読込・計算・画面表示のテスト(合成データのみ)
+  test_api.py           FastAPI エンドポイント・SPA 配信のテスト
   test_dist.py          配布パッケージ・起動 bat・更新 bat のテスト
 ```
+
 
 テスト: `.venv\Scripts\python -m pytest tests -v -p no:cacheprovider`
 
