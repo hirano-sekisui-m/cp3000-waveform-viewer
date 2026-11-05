@@ -323,6 +323,8 @@ button, input, select {
   border-collapse: collapse;
   font-size: 0.8125rem;
   text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .data-table th {
@@ -349,7 +351,14 @@ button, input, select {
 
 .data-table tr.selected {
   background-color: #eff6ff;
+  color: #1e40af;
 }
+
+.data-table tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--primary);
+  font-weight: 600;
+}
+
 
 /* Two columns layout in overlay */
 .overlay-layout {

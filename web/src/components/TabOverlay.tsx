@@ -30,8 +30,26 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
   const [loading, setLoading] = useState(false);
   const [downloadKind, setDownloadKind] = useState("raw");
 
+  // Drag selection state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
+  const [baseSelection, setBaseSelection] = useState<number[]>([]);
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+
   const isChromogenic = options.selectedMode === "比色項目";
   const waveTypeDict = isChromogenic ? CHROMO_WAVE_TYPES : COAG_WAVE_TYPES;
+
+  // Global mouse up to reliably stop drag even if mouse leaves the table
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setIsDragging(false);
+      setDragStartIndex(null);
+    };
+    window.addEventListener("mouseup", handleGlobalMouseUp);
+    return () => {
+      window.removeEventListener("mouseup", handleGlobalMouseUp);
+    };
+  }, []);
 
   // Auto-select first 5 records initially or when records change
   useEffect(() => {
@@ -80,17 +98,50 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
     options.thin,
   ]);
 
-  const handleSelectRow = (pos: number, isMulti: boolean) => {
-    if (isMulti) {
-      if (selectedPositions.includes(pos)) {
-        setSelectedPositions(selectedPositions.filter((p) => p !== pos));
-      } else {
-        if (selectedPositions.length >= 300) return;
-        setSelectedPositions([...selectedPositions, pos]);
-      }
-    } else {
-      setSelectedPositions([pos]);
+  // Drag & click row selection handlers
+  const handleMouseDown = (e: React.MouseEvent, index: number) => {
+    if (e.button !== 0) return; // left click only
+    e.preventDefault(); // prevent native browser text selection
+
+    const currentPos = records[index]._pos;
+
+    if (e.shiftKey && lastClickedIndex !== null) {
+      // Shift + click: select range from lastClickedIndex to index
+      const start = Math.min(lastClickedIndex, index);
+      const end = Math.max(lastClickedIndex, index);
+      const range = records.slice(start, end + 1).map((r) => r._pos);
+      const isAppend = e.ctrlKey || e.metaKey;
+      const base = isAppend ? selectedPositions : [];
+      const merged = Array.from(new Set([...base, ...range])).slice(0, 300);
+      setSelectedPositions(merged);
+      return;
     }
+
+    const isAppend = e.ctrlKey || e.metaKey;
+    const base = isAppend ? [...selectedPositions] : [];
+
+    setIsDragging(true);
+    setDragStartIndex(index);
+    setLastClickedIndex(index);
+    setBaseSelection(base);
+
+    let newSel: number[];
+    if (isAppend && selectedPositions.includes(currentPos)) {
+      newSel = selectedPositions.filter((p) => p !== currentPos);
+    } else {
+      newSel = Array.from(new Set([...base, currentPos])).slice(0, 300);
+    }
+    setSelectedPositions(newSel);
+  };
+
+  const handleMouseEnter = (index: number) => {
+    if (!isDragging || dragStartIndex === null) return;
+
+    const start = Math.min(dragStartIndex, index);
+    const end = Math.max(dragStartIndex, index);
+    const range = records.slice(start, end + 1).map((r) => r._pos);
+    const merged = Array.from(new Set([...baseSelection, ...range])).slice(0, 300);
+    setSelectedPositions(merged);
   };
 
   const handleSelectAllVisible = () => {
@@ -226,13 +277,14 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
                 </tr>
               </thead>
               <tbody>
-                {records.map((r) => {
+                {records.map((r, i) => {
                   const isSelected = selectedPositions.includes(r._pos);
                   return (
                     <tr
                       key={r.No}
                       className={isSelected ? "selected" : ""}
-                      onClick={(e) => handleSelectRow(r._pos, e.ctrlKey || e.shiftKey || e.metaKey)}
+                      onMouseDown={(e) => handleMouseDown(e, i)}
+                      onMouseEnter={() => handleMouseEnter(i)}
                       style={{ cursor: "pointer" }}
                     >
                       <td>{r.No}</td>
@@ -251,7 +303,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
             </table>
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-            ※行クリックで選択、Ctrl/Shift+クリックで複数選択 (最大300本)
+            ※クリックまたはドラッグで範囲選択、Ctrl+ドラッグで追加選択 (最大300本)
           </span>
         </div>
 
