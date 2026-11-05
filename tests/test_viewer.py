@@ -14,8 +14,14 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import cp3000  # noqa: E402
-from cp3000.batch import csv_attributes_and_items  # noqa: E402
-from make_demo_batch import build_batch  # noqa: E402
+from cp3000.batch import (  # noqa: E402
+    MODE_CHROMOGENIC,
+    MODE_COAGULATION,
+    MODE_UNKNOWN,
+    classify_measurement_mode,
+    csv_attributes_and_items,
+)
+from make_demo_batch import build_batch, build_chromogenic_csv  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -262,3 +268,91 @@ def test_csv_variable_and_mixed_time_intervals(tmp_path, monkeypatch):
         assert not at.exception, (mode, [e.value for e in at.exception])
 
 
+
+
+def test_measurement_mode_classification():
+    """Verify photometric port 1-14 -> Coagulation, 15-20 -> Chromogenic, others -> Unknown."""
+    for p in range(1, 15):
+        assert classify_measurement_mode(p) == MODE_COAGULATION
+        assert classify_measurement_mode(str(p)) == MODE_COAGULATION
+    for p in range(15, 21):
+        assert classify_measurement_mode(p) == MODE_CHROMOGENIC
+        assert classify_measurement_mode(str(p)) == MODE_CHROMOGENIC
+    for p in [0, 21, 99, -1, None, "abc", ""]:
+        assert classify_measurement_mode(p) == MODE_UNKNOWN
+
+
+def test_real_chromogenic_csv():
+    """Verify loading and calculations on demo_data/261022_比色項目csvの例.csv."""
+    real_csv = ROOT / "demo_data" / "261022_比色項目csvの例.csv"
+    if not real_csv.is_file():
+        pytest.skip("261022_比色項目csvの例.csv not found")
+
+    b = cp3000.load_batch(real_csv)
+    assert b.modes == [MODE_CHROMOGENIC]
+    assert (b.table["測定モード"] == MODE_CHROMOGENIC).all()
+    assert len(b.records) == 372
+    assert "処理値" in b.table.columns
+
+    # Check the user-mentioned profile (proc_val = 21.7)
+    row_217 = b.table[b.table["処理値"] == "21.7"]
+    assert len(row_217) >= 1
+    idx = int(row_217.iloc[0]["No"]) - 1
+    rec = b.records[idx]
+    assert rec.port_no in range(15, 21)
+
+    # Timepoints: idx 9 is 81.2s, idx 19 is 171.2s
+    t = rec.time
+    assert round(float(t[9]), 1) == 81.2
+    assert round(float(t[19]), 1) == 171.2
+    raw = rec.data
+    # 21.7 = (11935 - 11609) / (1.5 * 10) = 326 / 15
+    delta_raw = raw[19] - raw[9]
+    avg_slope_mabs_min = (delta_raw / 1.5) * 0.1
+    assert abs(avg_slope_mabs_min - 21.733) < 0.1
+
+    # Derive waveforms
+    d = b.derive([idx])
+    assert d.abs_slope is not None
+    # 0-point alignment at 81.2s (index 9)
+    aligned_9 = d.align_chromogenic_baseline(0, ref_idx=9)
+    assert aligned_9[9] == 0.0
+    assert abs(aligned_9[19] - 326.0) < 1e-6
+
+    # 0-point alignment at 0.0s (index 0)
+    aligned_0 = d.align_chromogenic_baseline(0, ref_idx=0)
+    assert aligned_0[0] == 0.0
+
+    # Velocity wave (abs_slope) is in mAbs/min.
+    slp = d.abs_slope[0]
+    assert np.isfinite(slp).all()
+    # around 81.2s - 171.2s, slope should be near 21-23 mAbs/min.
+    mid_slopes = slp[9:20]
+    assert np.nanmean(mid_slopes) > 18.0 and np.nanmean(mid_slopes) < 25.0
+
+
+def test_synthetic_chromogenic_batch_and_ui(tmp_path, monkeypatch):
+    """Verify synthetic chromogenic CSV file loading and Streamlit AppTest."""
+    from streamlit.testing.v1 import AppTest
+
+    csv_path = tmp_path / "test_TAT_CSV_data.csv"
+    build_chromogenic_csv(csv_path, n_samples=4, seed=42)
+
+    b = cp3000.load_batch(csv_path)
+    assert b.modes == [MODE_CHROMOGENIC]
+    assert len(b.records) == 4
+
+    app_dir = tmp_path / "app_chrono"
+    shutil.copytree(ROOT / "cp3000", app_dir / "cp3000")
+    shutil.copy(ROOT / "app.py", app_dir / "app.py")
+    (app_dir / "settings.json").write_text('{"root": "%s"}' % str(csv_path).replace("\\", "\\\\"), encoding="utf-8")
+    monkeypatch.syspath_prepend(str(app_dir))
+
+    at = AppTest.from_file(str(app_dir / "app.py"), default_timeout=120)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+
+    # Test changing 0-point alignment
+    ref_radio_idx = [r.label for r in at.sidebar.radio].index("0点の基準")
+    at.sidebar.radio[ref_radio_idx].set_value("任意ポイント指定").run()
+    assert not at.exception, [e.value for e in at.exception]

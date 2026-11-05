@@ -16,6 +16,8 @@ WAVE_TYPES: Dict[str, Tuple[str, str]] = {
     "endpoint_scaled": ("凝固波形(終点=100%)", "%"),
     "slope": ("速度波形(1次微分)", "%/s"),
     "acceleration": ("加速度波形(2次微分)", "%/s²"),
+    "base_aligned": ("タイムコース(0点補正)", "吸光度(生値差分)"),
+    "abs_slope": ("速度波形", "mAbs/min."),
 }
 
 # Categorical slots in fixed order (validated reference palette), light / dark surface.
@@ -96,6 +98,7 @@ def overlay_figure(
     x_range: Optional[Tuple[float, float]] = None,
     x_title: str = "時間 (秒)",
     show_tc2: bool = True,
+    ref_time: Optional[float] = None,
     max_points: Optional[int] = 1500,
     panel_height: int = 260,
     legend_groups: bool = False,
@@ -139,6 +142,13 @@ def overlay_figure(
 
     for row, key in enumerate(types, start=1):
         fig.update_yaxes(title_text=WAVE_TYPES[key][1], row=row, col=1)
+        if key == "base_aligned":
+            fig.add_hline(y=0, line=dict(color=theme.axis, width=1, dash="dash"), row=row, col=1)
+            if ref_time is not None and np.isfinite(ref_time):
+                fig.add_vline(x=ref_time, line=dict(color=theme.text2, width=1.5, dash="dot"), row=row, col=1)
+                fig.add_annotation(x=ref_time, y=0.92, yref=f"y{row} domain", xref=f"x{row}",
+                                   text=f"基準点 {ref_time:.1f}s", showarrow=False, xanchor="left", xshift=4,
+                                   bgcolor=theme.surface, font=dict(size=11, color=theme.text2))
     fig.update_xaxes(title_text=x_title, row=len(types), col=1)
     if x_range is not None:
         fig.update_xaxes(range=list(x_range))
@@ -200,6 +210,73 @@ def detail_figure(time: np.ndarray, values: Dict[str, np.ndarray], tetc: Dict[st
     fig.add_hline(y=50, line=dict(color=theme.axis, width=1, dash="dot"), row=1, col=2)
     fig.update_xaxes(title_text="時間 (秒)", row=2, col=1)
     fig.update_xaxes(title_text="時間 (秒)", row=2, col=2)
+    if x_range is not None:
+        fig.update_xaxes(range=list(x_range))
+    fig.update_layout(
+        height=620, margin=dict(l=60, r=20, t=50, b=50),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor=theme.surface,
+        font=dict(color=theme.text, family="Meiryo, 'Yu Gothic UI', 'Noto Sans JP', sans-serif"),
+        hovermode="x unified", hoverlabel=dict(bgcolor=theme.surface, font=dict(color=theme.text)),
+    )
+    _style_axes(fig, theme)
+    return fig
+
+
+CHROMOGENIC_PANELS = ["raw", "base_aligned", "abs_slope"]
+
+
+def detail_chromogenic_figure(
+    time: np.ndarray,
+    values: Dict[str, np.ndarray],
+    theme: Theme,
+    *,
+    color: str,
+    ref_time: Optional[float] = None,
+    x_range: Optional[Tuple[float, float]] = None,
+    device_value: Optional[float] = None,
+    proc_value: Optional[float] = None,
+) -> go.Figure:
+    """Stacked 3 panels for one chromogenic waveform: Raw, Base-aligned, Velocity (mAbs/min.)."""
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        subplot_titles=[WAVE_TYPES[k][0] for k in CHROMOGENIC_PANELS],
+    )
+    for row, key in enumerate(CHROMOGENIC_PANELS, start=1):
+        v = values.get(key)
+        if v is None:
+            continue
+        fig.add_trace(go.Scatter(
+            x=time, y=v, mode="lines+markers" if len(time) <= 30 else "lines",
+            line=dict(color=color, width=2), marker=dict(size=5, color=color),
+            name=WAVE_TYPES[key][0], showlegend=False,
+            hovertemplate="%{x:.1f} 秒: %{y:.4g}<extra></extra>",
+        ), row=row, col=1)
+        fig.update_yaxes(title_text=WAVE_TYPES[key][1], row=row, col=1)
+
+    # Base-aligned panel: zero line and ref_time vertical line
+    fig.add_hline(y=0, line=dict(color=theme.axis, width=1, dash="dash"), row=2, col=1)
+    if ref_time is not None and np.isfinite(ref_time):
+        for r in range(1, 4):
+            fig.add_vline(x=ref_time, line=dict(color=theme.text2, width=1.5, dash="dot"), row=r, col=1)
+        fig.add_annotation(
+            x=ref_time, y=0.92, yref="y2 domain", xref="x2",
+            text=f"基準点 {ref_time:.1f}s", showarrow=False, xanchor="left", xshift=4,
+            bgcolor=theme.surface, font=dict(size=11, color=theme.text2),
+        )
+
+    # Velocity panel: peak annotation
+    v_slope = values.get("abs_slope")
+    if v_slope is not None and np.isfinite(v_slope).any():
+        idx_max = int(np.nanargmax(v_slope))
+        t_max = float(time[idx_max])
+        val_max = float(v_slope[idx_max])
+        fig.add_trace(go.Scatter(
+            x=[t_max], y=[val_max], mode="markers", showlegend=False,
+            marker=dict(size=8, color=theme.series[1], line=dict(color=theme.surface, width=2)),
+            hovertemplate=f"最大速度: {val_max:.2f} mAbs/min. ({t_max:.1f}s)<extra></extra>",
+        ), row=3, col=1)
+
+    fig.update_xaxes(title_text="時間 (秒)", row=3, col=1)
     if x_range is not None:
         fig.update_xaxes(range=list(x_range))
     fig.update_layout(

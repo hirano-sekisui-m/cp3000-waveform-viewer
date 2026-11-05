@@ -28,6 +28,27 @@ from .log import LogTables, parse_log_dat
 from .prof import ProfRecord, detect_profile_format, parse_prof_dat
 from .signal import TIME_STEP_SEC, Derived, derive_batch, time_axis
 
+MODE_COAGULATION = "凝固項目"
+MODE_CHROMOGENIC = "比色項目"
+MODE_UNKNOWN = "その他"
+
+
+def classify_measurement_mode(port_no: Any) -> str:
+    """Classify CP3000 measurement mode from photometric port number.
+
+    Port 1-14: Coagulation mode (PT, APTT, Fbg, etc.)
+    Port 15-20: Chromogenic / Latex turbidimetric mode (TAT, D-dimer, etc.)
+    """
+    try:
+        p = int(port_no)
+    except (ValueError, TypeError):
+        return MODE_UNKNOWN
+    if 1 <= p <= 14:
+        return MODE_COAGULATION
+    elif 15 <= p <= 20:
+        return MODE_CHROMOGENIC
+    return MODE_UNKNOWN
+
 
 # ---- copied from src/cwa/ingestion/merger.py ------------------------------------------
 
@@ -620,6 +641,14 @@ class Batch:
     warnings: List[str] = field(default_factory=list)
     time_points: Optional[np.ndarray] = None
 
+    @property
+    def modes(self) -> List[str]:
+        """Unique measurement modes present in this batch."""
+        if "測定モード" in self.table.columns:
+            return [m for m in [MODE_COAGULATION, MODE_CHROMOGENIC, MODE_UNKNOWN]
+                    if (self.table["測定モード"] == m).any()]
+        return []
+
     def record_time(self, pos: int) -> np.ndarray:
         """Time axis (in seconds) of the record at ``pos``."""
         r = self.records[int(pos)]
@@ -745,6 +774,7 @@ class Batch:
         endpoint_scaled = np.full((n_rows, max_cols), np.nan)
         slope = np.full((n_rows, max_cols), np.nan)
         acceleration = np.full((n_rows, max_cols), np.nan)
+        abs_slope = np.full((n_rows, max_cols), np.nan)
         times_out: List[np.ndarray] = [np.empty(0, dtype=float) for _ in range(n_rows)]
         tetc_rows: List[Optional[pd.Series]] = [None] * n_rows
 
@@ -757,6 +787,8 @@ class Batch:
                 endpoint_scaled[k, :c] = d_sub.endpoint_scaled[local_i]
                 slope[k, :c] = d_sub.slope[local_i]
                 acceleration[k, :c] = d_sub.acceleration[local_i]
+                if d_sub.abs_slope is not None:
+                    abs_slope[k, :c] = d_sub.abs_slope[local_i]
                 times_out[k] = d_sub.time.copy()
                 tetc_rows[k] = d_sub.tetc.iloc[local_i]
 
@@ -772,6 +804,7 @@ class Batch:
             acceleration=acceleration,
             tetc=tetc_df,
             times=times_out,
+            abs_slope=abs_slope,
         )
 
 
@@ -819,7 +852,9 @@ def _load_csv_only_batch(
         "依頼No": [p.req_no_norm for p in profiles],
         "項目番号": pd.array([p.item_no for p in profiles], dtype="Int64"),
         "項目名": [p.item_name for p in profiles],
+        "測定モード": [classify_measurement_mode(p.port_no) for p in profiles],
         "ポートNo": [p.port_no for p in profiles],
+        "処理値": [p.process_val for p in profiles],
         "秒": [int(round(float(p.time[-1]))) if len(p.time) else 0 for p in profiles],
         "エラーフラグ": [0 for _ in profiles],
         "データ数": [len(p.data) for p in profiles],
@@ -850,7 +885,7 @@ def _load_csv_only_batch(
         table = table.drop(columns=["依頼No_norm"])
     table["CSV対応"] = table["測定値"].notna()
 
-    first = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定値", "Dフラグ", "比"]
+    first = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定モード", "測定値", "処理値", "Dフラグ", "比"]
     attr_cols = [c for c in csv_tables.attributes.columns
                  if c not in ("依頼No_norm", "依頼No.") and c in table.columns]
     rest = ["測定種別", "ﾗｯｸNo", "ポートNo", "秒", "エラーフラグ", "データ数", "時間間隔(秒)", "測定時間(秒)", "重複", "再測定", "CSV対応"]
@@ -906,6 +941,7 @@ def load_batch(
         "No": [r.no for r in records],
         "内部依頼No": pd.array([r.internal_request_no for r in records], dtype="Int64"),
         "項目番号": pd.array([r.item_no for r in records], dtype="Int64"),
+        "測定モード": [classify_measurement_mode(r.port_no) for r in records],
         "ポートNo": [r.port_no for r in records],
         "秒": [r.sec for r in records],
         "エラーフラグ": [r.error_flag for r in records],
@@ -984,7 +1020,7 @@ def load_batch(
     no_name = table["項目名"] == ""
     table.loc[no_name, "項目名"] = "項目" + table.loc[no_name, "項目番号"].astype(str)
 
-    first = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定値", "Dフラグ", "比"]
+    first = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定モード", "測定値", "処理値", "Dフラグ", "比"]
     attr_cols = [c for c in (csv_tables.attributes.columns if csv_tables is not None else [])
                  if c not in ("依頼No_norm", "依頼No.") and c in table.columns]
     rest = ["測定種別", "ﾗｯｸNo", "ポートNo", "秒", "エラーフラグ", "データ数", "測定時間(秒)", "重複", "再測定", "CSV対応"]

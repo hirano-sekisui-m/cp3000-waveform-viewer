@@ -20,8 +20,25 @@ import pandas as pd
 import streamlit as st
 
 import cp3000
-from cp3000.batch import Batch, clean_path, find_batch_files, find_batch_folders, load_batch
-from cp3000.plots import MAX_SERIES, WAVE_TYPES, Series, Theme, detail_figure, overlay_figure
+from cp3000.batch import (
+    MODE_CHROMOGENIC,
+    MODE_COAGULATION,
+    MODE_UNKNOWN,
+    Batch,
+    clean_path,
+    find_batch_files,
+    find_batch_folders,
+    load_batch,
+)
+from cp3000.plots import (
+    MAX_SERIES,
+    WAVE_TYPES,
+    Series,
+    Theme,
+    detail_chromogenic_figure,
+    detail_figure,
+    overlay_figure,
+)
 from cp3000.signal import align_waveform_time, derive_batch
 
 APP_DIR = Path(__file__).resolve().parent
@@ -213,34 +230,82 @@ except Exception as e:  # show the reader's message instead of a traceback
     st.error(f"読み込みに失敗しました: {e}")
     st.stop()
 
-table = batch.table.copy()
+# ---- mode detection & sidebar display options ------------------------------------------
 
-# ---- sidebar: display options ----------------------------------------------------------
+available_modes = batch.modes
+with st.sidebar:
+    if len(available_modes) > 1:
+        st.markdown("### 🔬 測定モード")
+        selected_mode = st.radio("測定モード選択", available_modes, horizontal=True,
+                                 help="凝固項目と比色項目で解析・表示方法が異なります。片方ずつ表示します。")
+    elif len(available_modes) == 1:
+        selected_mode = available_modes[0]
+    else:
+        selected_mode = MODE_COAGULATION
+
+is_chromogenic = (selected_mode == MODE_CHROMOGENIC)
+table = batch.table[batch.table["測定モード"] == selected_mode].copy().reset_index(drop=True)
 
 with st.sidebar:
     st.markdown("### 🎛 表示")
-    type_keys = list(WAVE_TYPES)
-    types = st.multiselect("波形の種類(上から順にパネル表示)", type_keys, default=["raw", "scaled", "slope"],
-                           format_func=lambda k: WAVE_TYPES[k][0])
-    align = st.selectbox("時間軸のそろえ方", ["off", "tc2", "peak", "rise"], format_func=lambda m: {
-        "off": "そろえない(測定時間)", "tc2": "Tc2 を 0 秒に", "peak": "速度のピークを 0 秒に",
-        "rise": "立ち上がり(10%)を 0 秒に"}[m])
+    if is_chromogenic:
+        type_keys = ["raw", "base_aligned", "abs_slope"]
+        types = st.multiselect("波形の種類(上から順にパネル表示)", type_keys,
+                               default=["raw", "base_aligned", "abs_slope"],
+                               format_func=lambda k: WAVE_TYPES[k][0])
+        st.markdown("#### ⏱️ タイムコースの0点合わせ")
+        ref_mode = st.radio("0点の基準", ["始点(0秒時点)", "任意ポイント指定"], horizontal=True)
+        time_pts = batch.time_points if batch.time_points is not None else np.array([])
+        if len(time_pts) == 0 and len(batch.records):
+            longest_rec = max(batch.records, key=lambda r: len(r.time) if r.time is not None else 0)
+            if longest_rec.time is not None:
+                time_pts = longest_rec.time
+        ref_idx = 0
+        ref_time_val = float(time_pts[0]) if len(time_pts) else 0.0
+        if ref_mode == "任意ポイント指定" and len(time_pts):
+            pt_options = list(range(len(time_pts)))
+            ref_idx = st.selectbox(
+                "合わせるポイント",
+                pt_options,
+                index=min(9, len(time_pts) - 1),
+                format_func=lambda i: f"第 {i + 1} ポイント ({time_pts[i]:.1f} 秒)"
+            )
+            ref_time_val = float(time_pts[ref_idx])
+        align = "off"
+        show_tc2 = False
+        window = None
+        coag = 0.5
+    else:
+        type_keys = ["raw", "scaled", "endpoint_scaled", "slope", "acceleration"]
+        types = st.multiselect("波形の種類(上から順にパネル表示)", type_keys,
+                               default=["raw", "scaled", "slope"],
+                               format_func=lambda k: WAVE_TYPES[k][0])
+        align = st.selectbox("時間軸のそろえ方", ["off", "tc2", "peak", "rise"], format_func=lambda m: {
+            "off": "そろえない(測定時間)", "tc2": "Tc2 を 0 秒に", "peak": "速度のピークを 0 秒に",
+            "rise": "立ち上がり(10%)を 0 秒に"}[m])
+        ref_idx = 0
+        ref_time_val = None
+        show_tc2 = st.toggle("Tc2 の位置に印を付ける", value=True)
+        with st.expander("計算の設定"):
+            window = st.number_input("解析窓(秒、空欄=全長)", value=None, min_value=10.0, step=10.0, placeholder="全長",
+                                     help="生波形をこの時間で切ってから計算します(0–100% はこの窓内の最大で規格化)。")
+            coag = st.slider("Tc の判定割合", 0.1, 0.9, 0.5, 0.05, help="累積の何割に達した時刻を Tc とするか(標準 0.5)。")
+
     c1, c2 = st.columns(2)
     x_lo = c1.number_input("表示開始(秒)", value=None, step=10.0, placeholder="自動")
     x_hi = c2.number_input("表示終了(秒)", value=None, step=10.0, placeholder="自動")
     baseline = st.toggle("生波形の開始値を 0 にそろえる", value=False,
                          help="生波形の最初の値を引いて、立ち上がりの大きさを比べやすくします。")
-    show_tc2 = st.toggle("Tc2 の位置に印を付ける", value=True)
     thin = st.toggle("重ね描きは間引いて軽くする", value=True, help="1 本あたり約 1500 点に間引きます。詳細タブは全点です。")
-    with st.expander("計算の設定"):
-        window = st.number_input("解析窓(秒、空欄=全長)", value=None, min_value=10.0, step=10.0, placeholder="全長",
-                                 help="生波形をこの時間で切ってから計算します(0–100% はこの窓内の最大で規格化)。")
-        coag = st.slider("Tc の判定割合", 0.1, 0.9, 0.5, 0.05, help="累積の何割に達した時刻を Tc とするか(標準 0.5)。")
     st.markdown(f"<div class='subtle'>cp3000 v{cp3000.__version__}</div>", unsafe_allow_html=True)
 
-tetc = cached_tetc(sig, batch, window, coag)
-table["Tc2(計算)"] = tetc["Tc2"].round(1).to_numpy()
-table["Te2(計算)"] = tetc["Te2"].round(1).to_numpy()
+if not is_chromogenic and len(table):
+    tetc = cached_tetc(sig, batch, window, coag)
+    table["Tc2(計算)"] = tetc.iloc[table["No"] - 1]["Tc2"].round(1).to_numpy()
+    table["Te2(計算)"] = tetc.iloc[table["No"] - 1]["Te2"].round(1).to_numpy()
+else:
+    table["Tc2(計算)"] = np.nan
+    table["Te2(計算)"] = np.nan
 table["_pos"] = table["No"] - 1
 
 label_candidates = [c for c in ["依頼No", "SID", "検体名", "検体ﾊﾞｰｺｰﾄﾞ", "項目名", "内部依頼No", "No", "属性"] if c in table.columns]
@@ -287,7 +352,8 @@ pts_summary = batch.profile_n_summary()
 step_summary = batch.time_step_summary()
 pts_chip = (f"<span class='chip'>{pts_summary} (CSV 簡易タイムコース・{step_summary})</span>"
             if batch.prof_path is None else f"<span class='chip'>{pts_summary}</span>")
-st.markdown("<div class='chips'>" + chip("prof", batch.prof_path) + chip("CSV", batch.csv_path)
+mode_chip = f"<span class='chip ok'>モード: {selected_mode}</span>"
+st.markdown("<div class='chips'>" + mode_chip + chip("prof", batch.prof_path) + chip("CSV", batch.csv_path)
             + chip("LOG", batch.log_path) + pts_chip + "</div>",
             unsafe_allow_html=True)
 
@@ -313,8 +379,17 @@ def display_values(d, k: int) -> Dict[str, np.ndarray]:
         fin = np.flatnonzero(np.isfinite(raw))
         if fin.size:
             raw = raw - raw[fin[0]]
-    return {"raw": raw, "scaled": d.scaled[k, :n_k], "endpoint_scaled": d.endpoint_scaled[k, :n_k],
-            "slope": d.slope[k, :n_k], "acceleration": d.acceleration[k, :n_k]}
+    base_aligned = d.align_chromogenic_baseline(k, ref_idx=ref_idx)
+    abs_slope = d.abs_slope[k, :n_k] if d.abs_slope is not None else np.full(n_k, np.nan)
+    return {
+        "raw": raw,
+        "scaled": d.scaled[k, :n_k],
+        "endpoint_scaled": d.endpoint_scaled[k, :n_k],
+        "slope": d.slope[k, :n_k],
+        "acceleration": d.acceleration[k, :n_k],
+        "base_aligned": base_aligned,
+        "abs_slope": abs_slope,
+    }
 
 
 def time_shift(d, k: int) -> float:
@@ -395,11 +470,15 @@ with tab_overlay:
     if only_err:
         view = view[view["エラーフラグ"] != 0]
 
-    show_cols = [c for c in ["No", "依頼No", "SID", "検体名", "項目名", "測定値", "Tc2(計算)", "属性",
-                             "測定時間(秒)", "エラーフラグ", "再測定"] if c in view.columns]
+    if is_chromogenic:
+        show_cols = [c for c in ["No", "依頼No", "SID", "検体名", "項目名", "測定値", "処理値", "ポートNo",
+                                 "測定時間(秒)", "エラーフラグ", "再測定"] if c in view.columns]
+    else:
+        show_cols = [c for c in ["No", "依頼No", "SID", "検体名", "項目名", "測定値", "Tc2(計算)", "属性",
+                                 "測定時間(秒)", "エラーフラグ", "再測定"] if c in view.columns]
     if not table["CSV対応"].any():
-        show_cols = [c for c in ["No", "内部依頼No", "項目番号", "項目名", "Tc2(計算)", "測定時間(秒)",
-                                 "エラーフラグ", "重複"] if c in view.columns]
+        show_cols = [c for c in ["No", "内部依頼No", "項目番号", "項目名", "測定モード", "ポートNo",
+                                 "測定時間(秒)", "エラーフラグ", "重複"] if c in view.columns]
 
     left, right = st.columns([1, 2.4], gap="medium")
     with left:
@@ -465,17 +544,20 @@ with tab_overlay:
                 fig = overlay_figure(
                     series, types, theme, x_range=x_range(max_t),
                     x_title="時間 (秒)" if align == "off" else "そろえた時間 (秒)",
-                    show_tc2=show_tc2, max_points=1500 if thin else None,
+                    show_tc2=(show_tc2 if not is_chromogenic else False),
+                    ref_time=(ref_time_val if is_chromogenic else None),
+                    max_points=1500 if thin else None,
                     legend_groups=(color_by != "波形ごと"),
                     panel_height=230 if len(types) >= 3 else 300,
                 )
-                fig.update_layout(uirevision=f"{sig}|{align}|{','.join(types)}")
+                fig.update_layout(uirevision=f"{sig}|{align}|{','.join(types)}|{ref_idx}")
                 st.plotly_chart(fig, width="stretch", config=PLOT_CONFIG, theme=None)
 
                 with st.popover("⬇ 表示中の波形を CSV で保存"):
                     kind = st.selectbox("波形の種類", type_keys, format_func=lambda k: WAVE_TYPES[k][0], key="dl_kind")
-                    meta = chosen[[c for c in ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "SID", "検体名",
-                                               "測定値", "Tc2(計算)"] if c in chosen.columns]].reset_index(drop=True)
+                    meta_cols = ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "測定モード", "SID", "検体名",
+                                 "測定値", "処理値", "Tc2(計算)"]
+                    meta = chosen[[c for c in meta_cols if c in chosen.columns]].reset_index(drop=True)
                     if d.times is None:
                         vals = np.vstack([display_values(d, k)[kind] for k in range(len(chosen))])
                         val_df = pd.DataFrame(vals, columns=[f"{x:g}" if round(x, 1) != x else f"{x:.1f}" for x in d.time])
@@ -522,23 +604,52 @@ with tab_detail:
         g, info = st.columns([3, 1.1], gap="medium")
         with g:
             vals = display_values(d1, 0)
-            dfig = detail_figure(t1, vals, tt, theme, color=theme.series[0],
-                                 x_range=x_range(float(t1[-1]) if len(t1) else None) if align == "off" else None,
-                                 device_value=device)
-            dfig.update_layout(uirevision=f"{sig}|detail")
+            if is_chromogenic:
+                try:
+                    proc_val = float(row["処理値"]) if "処理値" in row and pd.notna(row["処理値"]) else None
+                except (TypeError, ValueError):
+                    proc_val = None
+                dfig = detail_chromogenic_figure(
+                    t1, vals, theme, color=theme.series[0],
+                    ref_time=ref_time_val,
+                    x_range=x_range(float(t1[-1]) if len(t1) else None),
+                    device_value=device, proc_value=proc_val,
+                )
+            else:
+                dfig = detail_figure(
+                    t1, vals, tt, theme, color=theme.series[0],
+                    x_range=x_range(float(t1[-1]) if len(t1) else None) if align == "off" else None,
+                    device_value=device,
+                )
+            dfig.update_layout(uirevision=f"{sig}|detail|{selected_mode}|{ref_idx}")
             st.plotly_chart(dfig, width="stretch", config=PLOT_CONFIG, theme=None)
         with info:
             def fmt(x: float, unit: str = " s", nd: int = 1) -> str:
                 return f"{x:.{nd}f}{unit}" if x is not None and np.isfinite(x) else "–"
 
-            v = vals["slope"]
-            vmax = float(np.nanmax(v)) if np.isfinite(v).any() else np.nan
-            t_vmax = float(t1[int(np.nanargmax(v))]) if np.isfinite(v).any() else np.nan
-            kv = [("Tc2", fmt(tt["Tc2"])), ("Te2", fmt(tt["Te2"])), ("Tc1", fmt(tt["Tc1"])), ("Te1", fmt(tt["Te1"])),
-                  ("装置の測定値", fmt(device) if device is not None else "–"),
-                  ("Tc2 − 装置値", fmt(tt["Tc2"] - device, " s") if device is not None and np.isfinite(tt["Tc2"]) else "–"),
-                  ("速度の最大", f"{fmt(vmax, ' %/s', 2)}({fmt(t_vmax)})")]
-            st.markdown("**計算値**")
+            if is_chromogenic:
+                v_slp = vals["abs_slope"]
+                vmax = float(np.nanmax(v_slp)) if np.isfinite(v_slp).any() else np.nan
+                t_vmax = float(t1[int(np.nanargmax(v_slp))]) if np.isfinite(v_slp).any() else np.nan
+                ref_raw = vals["raw"][ref_idx] if 0 <= ref_idx < len(vals["raw"]) else np.nan
+                kv = [
+                    ("基準点", f"{ref_time_val:.1f} s"),
+                    ("基準点吸光度", f"{ref_raw:.0f}" if np.isfinite(ref_raw) else "–"),
+                    ("最大反応速度", f"{fmt(vmax, ' mAbs/min.', 2)}({fmt(t_vmax)})"),
+                    ("装置測定値", f"{row['測定値']}" if "測定値" in row and pd.notna(row["測定値"]) else "–"),
+                ]
+                if "処理値" in row and pd.notna(row["処理値"]):
+                    kv.append(("装置処理値", f"{row['処理値']} mAbs/min."))
+                st.markdown("**比色解析値**")
+            else:
+                v = vals["slope"]
+                vmax = float(np.nanmax(v)) if np.isfinite(v).any() else np.nan
+                t_vmax = float(t1[int(np.nanargmax(v))]) if np.isfinite(v).any() else np.nan
+                kv = [("Tc2", fmt(tt["Tc2"])), ("Te2", fmt(tt["Te2"])), ("Tc1", fmt(tt["Tc1"])), ("Te1", fmt(tt["Te1"])),
+                      ("装置の測定値", fmt(device) if device is not None else "–"),
+                      ("Tc2 − 装置値", fmt(tt["Tc2"] - device, " s") if device is not None and np.isfinite(tt["Tc2"]) else "–"),
+                      ("速度の最大", f"{fmt(vmax, ' %/s', 2)}({fmt(t_vmax)})")]
+                st.markdown("**計算値**")
             st.markdown("<table style='width:100%;font-size:0.9rem'>" + "".join(
                 f"<tr><td style='opacity:.75;padding:3px 6px'>{k}</td>"
                 f"<td style='text-align:right;font-weight:600;padding:3px 6px;font-variant-numeric:tabular-nums'>{val}</td></tr>"
@@ -548,8 +659,11 @@ with tab_detail:
             info_df = pd.DataFrame({"項目": [c for c in table.columns if c not in skip],
                                     "値": [("" if pd.isna(row[c]) else str(row[c])) for c in table.columns if c not in skip]})
             st.dataframe(info_df, hide_index=True, height=360, width="stretch")
-        st.caption("縦線: 点線 = Tc1 / Te1、破線 = Tc2 / Te2、橙の実線 = 装置の測定値(CSV)。"
-                   "Te/Tc はリポジトリの 01 バッチと同じ手順で計算(移動平均 → 差分 → 移動中央値 → 累積)。")
+        if is_chromogenic:
+            st.caption("比色項目: 生波形、指定基準点で 0 にそろえたタイムコース差分、および反応速度(一次微分: mAbs/min.)を表示しています。")
+        else:
+            st.caption("縦線: 点線 = Tc1 / Te1、破線 = Tc2 / Te2、橙の実線 = 装置の測定値(CSV)。"
+                       "Te/Tc はリポジトリの 01 バッチと同じ手順で計算(移動平均 → 差分 → 移動中央値 → 累積)。")
 
 with tab_info:
     st.markdown("**全波形の一覧**")

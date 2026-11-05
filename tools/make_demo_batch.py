@@ -115,6 +115,53 @@ def build_batch(out: Path, *, n_samples: int, profile_n: int, seed: int, start_i
     print(f"wrote {out} ({len(records)} waveforms, {profile_n} points/record)")
 
 
+def build_chromogenic_csv(out_file: Path, *, n_samples: int = 6, seed: int = 1) -> None:
+    """Generate a synthetic chromogenic (TAT) CSV file (port 15-20)."""
+    rng = np.random.default_rng(seed)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    t_csv = np.array([0.0, 9.2, 18.0, 27.2, 36.0, 45.2, 54.0, 63.2, 72.0, 81.2,
+                      90.0, 99.2, 108.0, 117.2, 126.0, 135.2, 144.0, 153.2, 162.0, 171.2, 180.2])
+
+    buf = io.StringIO()
+    w = csv.writer(buf, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["PC Ver.3.0.0.18", "ﾕﾆｯﾄ Ver.1.32A"])
+    w.writerow([])
+    w.writerow(["依頼No.", "SID", "検体ﾊﾞｰｺｰﾄﾞ", "測定日", "属性", "TAT(ng/mL)", ""])
+
+    samples = []
+    for i in range(1, n_samples + 1):
+        conc = round(float(2.0 + i * 5.0 + rng.normal(0, 0.5)), 1)
+        rate = round(float(conc * 2.5 + rng.normal(0, 1.0)), 1)  # mAbs/min.
+        samples.append({"no": i, "conc": conc, "rate": rate})
+        w.writerow([f"C{i:03d}", f"Request-C{i:03d}", "", "2026/10/22 09:30:00", "", f"{conc:.1f}", ""])
+
+    w.writerow([])
+    w.writerow(["依頼No.", "項目名", "", "測光ﾎﾟｰﾄ", "処理値", "", "ﾌﾟﾛﾌｧｲﾙ"])
+    t_strs = [f"{x:.1f}" for x in t_csv]
+
+    for s in samples:
+        base_abs = 11000.0 + rng.normal(0, 100)
+        # linear rise between 81.2s and 171.2s (90s = 1.5min)
+        # delta_raw = rate * 1.5 * 10
+        delta_total = s["rate"] * 15.0
+        wave = np.full(len(t_csv), base_abs)
+        for idx, t in enumerate(t_csv):
+            if t < 81.2:
+                wave[idx] = base_abs + rng.normal(0, 5)
+            elif t <= 171.2:
+                frac = (t - 81.2) / 90.0
+                wave[idx] = base_abs + frac * delta_total + rng.normal(0, 5)
+            else:
+                wave[idx] = base_abs + delta_total + rng.normal(0, 5)
+        v_strs = [str(int(round(v))) for v in wave]
+        w.writerow([f"C{s['no']:03d}", "TAT", "41", "15", f"{s['rate']:.1f}", "", *t_strs])
+        w.writerow(["", "", "", "", "0", "", *v_strs])
+        w.writerow([" "])
+
+    out_file.write_bytes(buf.getvalue().encode("cp932"))
+    print(f"wrote chromogenic CSV {out_file} ({n_samples} samples)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "demo_data"))

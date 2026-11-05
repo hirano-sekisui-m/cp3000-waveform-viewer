@@ -633,12 +633,59 @@ class Derived:
     acceleration: np.ndarray      # 2nd derivative (%/s^2), slope of ``slope``
     tetc: pd.DataFrame            # Te1, Tc1, Te1_Tc1, Te2, Tc2, Te2_Tc2
     times: Optional[ list[np.ndarray] ] = None
+    abs_slope: Optional[np.ndarray] = None  # 1st derivative of absorbance in mAbs/min.
 
     def time_at(self, k: int) -> np.ndarray:
         """Return the time axis of record ``k`` (supports variable time intervals per record)."""
         if self.times is not None and 0 <= k < len(self.times):
             return self.times[k]
         return self.time
+
+    def align_chromogenic_baseline(self, k: int, ref_idx: int = 0) -> np.ndarray:
+        """Return baseline-subtracted absorbance where index ``ref_idx`` is 0."""
+        n_k = len(self.time_at(k))
+        row = self.raw[k, :n_k].copy()
+        if 0 <= ref_idx < len(row) and np.isfinite(row[ref_idx]):
+            return row - row[ref_idx]
+        fin = np.flatnonzero(np.isfinite(row))
+        if fin.size:
+            return row - row[fin[0]]
+        return row
+
+
+def chromogenic_slope_batch(
+    time_data: np.ndarray,
+    raw2d: np.ndarray,
+    half: int = 1,
+    batch_size: int = 100,
+) -> np.ndarray:
+    """Calculate 1st derivative of absorbance profiles in mAbs/min.
+
+    In CP3000 profiles, raw absorbance change is stored in 0.1 mAbs units.
+    rate (mAbs/min.) = (d_raw / dt_sec) * 0.1 * 60 = (d_raw / dt_sec) * 6.0
+    """
+    raw2d = np.asarray(raw2d, dtype=float)
+    if raw2d.ndim == 1:
+        raw2d = raw2d[None, :]
+    time_data = np.asarray(time_data, dtype=float)
+    if raw2d.shape[1] < 2:
+        return np.full_like(raw2d, np.nan)
+
+    slp = slope_batch(time_data, raw2d, half=half, batch_size=batch_size) * 6.0
+
+    # Fill endpoints if NaN using adjacent finite differences
+    for r in range(slp.shape[0]):
+        fin = np.flatnonzero(np.isfinite(raw2d[r]) & np.isfinite(time_data))
+        if len(fin) >= 2:
+            if np.isnan(slp[r, fin[0]]):
+                dt_0 = time_data[fin[1]] - time_data[fin[0]]
+                if dt_0 > 0:
+                    slp[r, fin[0]] = (raw2d[r, fin[1]] - raw2d[r, fin[0]]) / dt_0 * 6.0
+            if np.isnan(slp[r, fin[-1]]):
+                dt_end = time_data[fin[-1]] - time_data[fin[-2]]
+                if dt_end > 0:
+                    slp[r, fin[-1]] = (raw2d[r, fin[-1]] - raw2d[r, fin[-2]]) / dt_end * 6.0
+    return slp
 
 
 def _derive_csv_profile_batch(
@@ -707,6 +754,8 @@ def _derive_csv_profile_batch(
     head_zero_inplace(slope, mask)
     acceleration = slope_batch(time_data, slope, half=half, batch_size=batch_size)
 
+    abs_slope = chromogenic_slope_batch(time_data, raw2d, half=half, batch_size=batch_size)
+
     return Derived(
         time=time_data,
         raw=raw2d,
@@ -716,6 +765,7 @@ def _derive_csv_profile_batch(
         slope=slope,
         acceleration=acceleration,
         tetc=tetc_df,
+        abs_slope=abs_slope,
     )
 
 
@@ -743,7 +793,7 @@ def derive_batch(
         empty = np.full(raw2d.shape, np.nan)
         nan = np.full(raw2d.shape[0], np.nan)
         tetc = pd.DataFrame({k: nan for k in ["Te1", "Tc1", "Te1_Tc1", "Te2", "Tc2", "Te2_Tc2"]})
-        return Derived(time_data, raw2d, empty, empty, empty, empty, empty, tetc)
+        return Derived(time_data, raw2d, empty, empty, empty, empty, empty, tetc, abs_slope=empty)
 
     diffs = np.diff(time_data)
     fin_diffs = diffs[np.isfinite(diffs)]
@@ -776,6 +826,7 @@ def derive_batch(
 
     # The repo's viewer takes the acceleration as the slope (half=10) of the velocity waveform.
     acceleration = slope_batch(time_data, slope, half=SLOPE_HALF, batch_size=batch_size)
+    abs_slope = chromogenic_slope_batch(time_data, raw2d, half=SLOPE_HALF, batch_size=batch_size)
 
     return Derived(
         time=time_data,
@@ -786,4 +837,5 @@ def derive_batch(
         slope=slope,
         acceleration=acceleration,
         tetc=tetc.to_dataframe(),
+        abs_slope=abs_slope,
     )
