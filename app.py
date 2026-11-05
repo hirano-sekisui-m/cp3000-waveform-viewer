@@ -20,7 +20,7 @@ import pandas as pd
 import streamlit as st
 
 import cp3000
-from cp3000.batch import Batch, find_batch_files, find_batch_folders, load_batch
+from cp3000.batch import Batch, clean_path, find_batch_files, find_batch_folders, load_batch
 from cp3000.plots import MAX_SERIES, WAVE_TYPES, Series, Theme, detail_figure, overlay_figure
 from cp3000.signal import align_waveform_time, derive_batch
 
@@ -78,7 +78,7 @@ def file_sig(p: Optional[Path]) -> str:
 
 
 @st.cache_resource(max_entries=4, show_spinner=False)
-def cached_batch(sig: str, prof: str, csv: Optional[str], log: Optional[str], mode: str, enc: str, name: str) -> Batch:
+def cached_batch(sig: str, prof: Optional[str], csv: Optional[str], log: Optional[str], mode: str, enc: str, name: str) -> Batch:
     return load_batch(prof, csv, log, profile_mode=mode, csv_encoding=enc, name=name)
 
 
@@ -89,8 +89,7 @@ def cached_tetc(sig: str, _batch: Batch, window: Optional[float], coag: float) -
     n = len(_batch.records)
     for start in range(0, n, 200):
         pos = list(range(start, min(n, start + 200)))
-        t, m = _batch.matrix(pos)
-        parts.append(derive_batch(m, t, window_end_sec=window, coag_ratio=coag).tetc)
+        parts.append(_batch.derive(pos, window_end_sec=window, coag_ratio=coag).tetc)
     if not parts:
         return pd.DataFrame(columns=["Te1", "Tc1", "Te1_Tc1", "Te2", "Tc2", "Te2_Tc2"])
     return pd.concat(parts, ignore_index=True)
@@ -98,8 +97,7 @@ def cached_tetc(sig: str, _batch: Batch, window: Optional[float], coag: float) -
 
 @st.cache_resource(max_entries=16, show_spinner=False)
 def cached_derived(sig: str, _batch: Batch, positions: Tuple[int, ...], window: Optional[float], coag: float):
-    t, m = _batch.matrix(list(positions))
-    return derive_batch(m, t, window_end_sec=window, coag_ratio=coag)
+    return _batch.derive(list(positions), window_end_sec=window, coag_ratio=coag)
 
 
 def current_theme() -> Theme:
@@ -123,33 +121,60 @@ with st.sidebar:
     if source == "フォルダから選ぶ":
         default_root = settings.get("root") or str(DEMO_DIR)
         root = st.text_input("親フォルダ(バッチのフォルダを含む場所)", value=default_root,
-                             help="例: E:\\CWA\\data\\raw。この下で prof*.dat を含むフォルダを探します(3階層まで)。")
+                             help="例: E:\\CWA\\data\\raw。この下で prof*.dat または *CSV_data.csv を含むフォルダを探します(3階層まで)。")
         if root != settings.get("root"):
             save_settings(root=root)
-        folders = find_batch_folders(root) if root else []
-        if not folders:
-            st.warning("prof*.dat を含むフォルダが見つかりません。")
+        root_clean = clean_path(root)
+        rootp = Path(root_clean) if root_clean else Path()
+        direct_csv: Optional[Path] = None
+        if root_clean and rootp.is_file() and rootp.suffix.lower() == ".csv":
+            direct_csv = rootp
+            rootp = rootp.parent
+        folders = find_batch_folders(rootp) if root_clean else []
+        batch_entries: List[Tuple[str, Path, Optional[Path]]] = []
+        for f in folders:
+            f_files = find_batch_files(f)
+            if f_files.prof:
+                lbl = str(f.relative_to(rootp)) if f != rootp else f.name
+                batch_entries.append((lbl, f, None))
+            else:
+                for c in f_files.csv:
+                    lbl = str(c.relative_to(rootp)) if (f == rootp or len(f_files.csv) > 1) else str(f.relative_to(rootp))
+                    batch_entries.append((lbl, f, c))
+        if not batch_entries:
+            st.warning("prof*.dat または *CSV_data.csv を含むフォルダが見つかりません。")
         else:
-            rootp = Path(root)
-            labels = [str(f.relative_to(rootp)) if f != rootp else f.name for f in folders]
-            last = settings.get("last_batch")
+            labels = [e[0] for e in batch_entries]
+            last = str(direct_csv.relative_to(rootp)) if direct_csv is not None else settings.get("last_batch")
             idx = labels.index(last) if last in labels else 0
-            pick = st.selectbox(f"測定バッチ({len(folders)} 件)", labels, index=idx)
-            if pick != last:
+            pick = st.selectbox(f"測定バッチ({len(batch_entries)} 件)", labels, index=idx)
+            if direct_csv is None and pick != settings.get("last_batch"):
                 save_settings(last_batch=pick)
-            folder = folders[labels.index(pick)]
+            _, folder, picked_csv = batch_entries[labels.index(pick)]
             files = find_batch_files(folder)
-            batch_name = folder.name
-            with st.expander("使うファイル", expanded=len(files.prof) > 1 or len(files.csv) > 1 or len(files.log) > 1):
-                prof_p = st.selectbox("prof(波形)", files.prof, format_func=lambda p: p.name)
-                csv_opts = [None] + files.csv
-                csv_p = st.selectbox("CSV(測定結果)", csv_opts, index=1 if files.csv else 0,
-                                     format_func=lambda p: "(使わない)" if p is None else p.name)
-                log_opts = [None] + files.log
-                log_p = st.selectbox("LOG(依頼No の対応)", log_opts, index=1 if files.log else 0,
-                                     format_func=lambda p: "(使わない)" if p is None else p.name)
+            with st.expander("使うファイル", expanded=len(files.prof) > 1 or len(files.csv) > 1 or len(files.log) > 1 or not files.prof):
+                if files.prof:
+                    prof_opts: List[Optional[Path]] = list(files.prof) + ([None] if files.csv else [])
+                    prof_p = st.selectbox("prof(波形)", prof_opts,
+                                          format_func=lambda p: "(使わない・CSVのみ)" if p is None else p.name)
+                    csv_opts = ([None] + files.csv) if prof_p is not None else list(files.csv)
+                    csv_p = st.selectbox("CSV(測定結果)", csv_opts,
+                                         index=(1 if files.csv else 0) if prof_p is not None else 0,
+                                         format_func=lambda p: "(使わない)" if p is None else p.name)
+                    log_opts = [None] + files.log
+                    log_p = st.selectbox("LOG(依頼No の対応)", log_opts,
+                                         index=1 if (files.log and prof_p is not None) else 0,
+                                         format_func=lambda p: "(使わない)" if p is None else p.name)
+                    batch_name = folder.name if prof_p is not None else (csv_p.stem if csv_p is not None else folder.name)
+                else:
+                    prof_p = None
+                    csv_idx = files.csv.index(picked_csv) if picked_csv in files.csv else 0
+                    csv_p = st.selectbox("CSV(測定結果・簡易タイムコース)", files.csv, index=csv_idx,
+                                         format_func=lambda p: p.name)
+                    log_p = None
+                    batch_name = csv_p.stem if csv_p is not None else folder.name
     else:
-        ups = st.file_uploader("prof*.dat・LOG*.dat・*CSV_data.csv(まとめて選べます)", type=["dat", "csv"],
+        ups = st.file_uploader("prof*.dat・LOG*.dat・*CSV_data.csv(まとめて選べます、CSV単独でも可)", type=["dat", "csv"],
                                accept_multiple_files=True)
         if ups:
             key = hashlib.sha1("|".join(f"{u.name}:{u.size}" for u in ups).encode()).hexdigest()[:12]
@@ -163,16 +188,16 @@ with st.sidebar:
             prof_p = files.prof[0] if files.prof else None
             csv_p = files.csv[0] if files.csv else None
             log_p = files.log[0] if files.log else None
-            batch_name = "アップロード"
-            if prof_p is None:
-                st.warning("prof*.dat が含まれていません(ファイル名に prof を含む .dat が必要です)。")
+            batch_name = csv_p.stem if (prof_p is None and csv_p is not None) else "アップロード"
+            if prof_p is None and csv_p is None:
+                st.warning("prof*.dat または *CSV_data.csv が含まれていません。")
 
     with st.expander("読み込みの詳細設定"):
         mode = st.selectbox("prof の点数", ["auto", "6000", "3600"],
                             format_func=lambda m: {"auto": "自動判定", "6000": "6000 点", "3600": "3600 点"}[m])
         enc = st.selectbox("CSV の文字コード", ["cp932", "utf-8-sig", "utf-8"])
 
-if prof_p is None:
+if prof_p is None and csv_p is None:
     st.title("CP3000 波形ビューワー")
     st.info("左のサイドバーで測定バッチのフォルダを選ぶか、ファイルをアップロードしてください。"
             "試しに見る場合は `python tools/make_demo_batch.py` で demo_data を作れます。")
@@ -181,8 +206,9 @@ if prof_p is None:
 sig = "||".join([file_sig(prof_p), file_sig(csv_p), file_sig(log_p), mode, enc])
 try:
     with st.spinner("読み込み中…"):
-        batch = cached_batch(sig, str(prof_p), str(csv_p) if csv_p else None, str(log_p) if log_p else None,
-                             mode, enc, batch_name or prof_p.parent.name)
+        batch = cached_batch(sig, str(prof_p) if prof_p else None, str(csv_p) if csv_p else None,
+                             str(log_p) if log_p else None, mode, enc,
+                             batch_name or (prof_p.parent.name if prof_p else csv_p.stem))
 except Exception as e:  # show the reader's message instead of a traceback
     st.error(f"読み込みに失敗しました: {e}")
     st.stop()
@@ -257,8 +283,12 @@ def chip(label: str, path: Optional[Path]) -> str:
     return f"<span class='chip {cls}'>{label}{(': ' + path.name) if path is not None else ''}</span>"
 
 
+pts_summary = batch.profile_n_summary()
+step_summary = batch.time_step_summary()
+pts_chip = (f"<span class='chip'>{pts_summary} (CSV 簡易タイムコース・{step_summary})</span>"
+            if batch.prof_path is None else f"<span class='chip'>{pts_summary}</span>")
 st.markdown("<div class='chips'>" + chip("prof", batch.prof_path) + chip("CSV", batch.csv_path)
-            + chip("LOG", batch.log_path) + f"<span class='chip'>{batch.profile_n} 点/レコード</span></div>",
+            + chip("LOG", batch.log_path) + pts_chip + "</div>",
             unsafe_allow_html=True)
 
 m1, m2, m3, m4, m5 = st.columns(5)
@@ -277,23 +307,26 @@ theme = current_theme()
 
 
 def display_values(d, k: int) -> Dict[str, np.ndarray]:
-    raw = d.raw[k].copy()
+    n_k = len(d.time_at(k))
+    raw = d.raw[k, :n_k].copy()
     if baseline:
         fin = np.flatnonzero(np.isfinite(raw))
         if fin.size:
             raw = raw - raw[fin[0]]
-    return {"raw": raw, "scaled": d.scaled[k], "endpoint_scaled": d.endpoint_scaled[k],
-            "slope": d.slope[k], "acceleration": d.acceleration[k]}
+    return {"raw": raw, "scaled": d.scaled[k, :n_k], "endpoint_scaled": d.endpoint_scaled[k, :n_k],
+            "slope": d.slope[k, :n_k], "acceleration": d.acceleration[k, :n_k]}
 
 
 def time_shift(d, k: int) -> float:
-    t = d.time
+    t = d.time_at(k)
+    if len(t) == 0:
+        return np.nan
     if align == "off":
         return 0.0
     if align == "tc2":
         tc2 = d.tetc["Tc2"].iloc[k]
         return float(tc2) if np.isfinite(tc2) else np.nan
-    ref = d.slope[k] if align == "peak" else d.scaled[k]
+    ref = (d.slope[k] if align == "peak" else d.scaled[k])[: len(t)]
     if not np.isfinite(ref).any():
         return np.nan
     shifted = align_waveform_time(t, ref, align_mode=align)
@@ -419,7 +452,8 @@ with tab_overlay:
                     g = str(row[color_by])
                     color, group = gmap.get(g, theme.other), (g if g in gmap else "その他")
                 tc2 = d.tetc["Tc2"].iloc[k]
-                series.append(Series(label=row["_label"], color=color, time=d.time - shift,
+                tk = d.time_at(k)
+                series.append(Series(label=row["_label"], color=color, time=tk - shift,
                                      values=display_values(d, k), tc2=(tc2 - shift) if np.isfinite(tc2) else np.nan,
                                      group=group))
             skipped = len(chosen) - len(series)
@@ -440,11 +474,19 @@ with tab_overlay:
 
                 with st.popover("⬇ 表示中の波形を CSV で保存"):
                     kind = st.selectbox("波形の種類", type_keys, format_func=lambda k: WAVE_TYPES[k][0], key="dl_kind")
-                    k_idx = type_keys.index(kind)
                     meta = chosen[[c for c in ["No", "依頼No", "内部依頼No", "項目番号", "項目名", "SID", "検体名",
                                                "測定値", "Tc2(計算)"] if c in chosen.columns]].reset_index(drop=True)
-                    vals = np.vstack([display_values(d, k)[kind] for k in range(len(chosen))])
-                    wide = pd.concat([meta, pd.DataFrame(vals, columns=[f"{x:.1f}" for x in d.time])], axis=1)
+                    if d.times is None:
+                        vals = np.vstack([display_values(d, k)[kind] for k in range(len(chosen))])
+                        val_df = pd.DataFrame(vals, columns=[f"{x:g}" if round(x, 1) != x else f"{x:.1f}" for x in d.time])
+                    else:
+                        row_series = [
+                            pd.Series(display_values(d, k)[kind], index=np.round(d.time_at(k), 3))
+                            for k in range(len(chosen))
+                        ]
+                        val_df = pd.DataFrame(row_series).reset_index(drop=True)
+                        val_df.columns = [f"{float(x):g}" if round(float(x), 1) != float(x) else f"{float(x):.1f}" for x in val_df.columns]
+                    wide = pd.concat([meta, val_df], axis=1)
                     st.download_button("CSV をダウンロード", wide.to_csv(index=False).encode("utf-8-sig"),
                                        file_name=f"{batch.name}_{kind}.csv", mime="text/csv")
                     st.caption("1 行 = 1 波形、列 = 時間(秒)。時間軸はそろえる前の値です。")
@@ -471,6 +513,7 @@ with tab_detail:
         no = st.session_state["detail_no"]
         row = table[table["No"] == no].iloc[0]
         d1 = cached_derived(sig, batch, (int(row["_pos"]),), window, coag)
+        t1 = d1.time_at(0)
         tt = d1.tetc.iloc[0].to_dict()
         try:
             device = float(row["測定値"]) if "測定値" in row and pd.notna(row["測定値"]) else None
@@ -479,8 +522,8 @@ with tab_detail:
         g, info = st.columns([3, 1.1], gap="medium")
         with g:
             vals = display_values(d1, 0)
-            dfig = detail_figure(d1.time, vals, tt, theme, color=theme.series[0],
-                                 x_range=x_range(float(d1.time[-1]) if len(d1.time) else None) if align == "off" else None,
+            dfig = detail_figure(t1, vals, tt, theme, color=theme.series[0],
+                                 x_range=x_range(float(t1[-1]) if len(t1) else None) if align == "off" else None,
                                  device_value=device)
             dfig.update_layout(uirevision=f"{sig}|detail")
             st.plotly_chart(dfig, width="stretch", config=PLOT_CONFIG, theme=None)
@@ -490,7 +533,7 @@ with tab_detail:
 
             v = vals["slope"]
             vmax = float(np.nanmax(v)) if np.isfinite(v).any() else np.nan
-            t_vmax = float(d1.time[int(np.nanargmax(v))]) if np.isfinite(v).any() else np.nan
+            t_vmax = float(t1[int(np.nanargmax(v))]) if np.isfinite(v).any() else np.nan
             kv = [("Tc2", fmt(tt["Tc2"])), ("Te2", fmt(tt["Te2"])), ("Tc1", fmt(tt["Tc1"])), ("Te1", fmt(tt["Te1"])),
                   ("装置の測定値", fmt(device) if device is not None else "–"),
                   ("Tc2 − 装置値", fmt(tt["Tc2"] - device, " s") if device is not None and np.isfinite(tt["Tc2"]) else "–"),
@@ -523,14 +566,17 @@ with tab_info:
         else:
             rows_info.append({"種類": kind, "ファイル": p.name, "サイズ": f"{p.stat().st_size:,} bytes", "フォルダ": str(p.parent)})
     st.dataframe(pd.DataFrame(rows_info), hide_index=True, width="stretch")
-    detail = [f"prof: {batch.profile_n} 点/レコード、{len(batch.records):,} レコード"]
+    if batch.prof_path is not None:
+        detail = [f"prof: {pts_summary}、{len(batch.records):,} レコード"]
+    else:
+        detail = [f"CSV プロファイル(簡易タイムコース): {pts_summary}({step_summary})、{len(batch.records):,} レコード"]
     if batch.log_info:
         detail.append(f"LOG: 文字コード {batch.log_info['encoding']}、{batch.log_info['lines']:,} 行"
                       f"(うち時刻付き {batch.log_info['parsed_lines']:,} 行)")
     for line in detail:
         st.markdown(f"- {line}")
 
-    if batch.csv is not None and batch.log_path is not None:
+    if batch.csv is not None and (batch.log_path is not None or batch.prof_path is None):
         items_csv = batch.csv.items[~batch.csv.items["項目名"].str.endswith("_ratio")].dropna(subset=["項目番号"])
         have = set(zip(table["依頼No"].astype(str), table["項目番号"].astype("Int64").astype(str)))
         missing = items_csv[[(a, str(b)) not in have for a, b in zip(items_csv["依頼No_norm"], items_csv["項目番号"])]]
