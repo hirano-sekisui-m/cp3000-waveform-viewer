@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class FolderEntry(BaseModel):
+    entry_id: str
     label: str
     folder_path: str
     csv_path: Optional[str] = None
@@ -23,6 +24,8 @@ class BatchFilesDetail(BaseModel):
 
 class LoadBatchRequest(BaseModel):
     folder_path: Optional[str] = None
+    csv_path: Optional[str] = None
+    entry_id: Optional[str] = None
     prof_file: Optional[str] = None
     csv_file: Optional[str] = None
     log_file: Optional[str] = None

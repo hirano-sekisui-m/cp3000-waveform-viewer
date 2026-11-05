@@ -47,10 +47,10 @@ export const App: React.FC = () => {
         setOptions((prev) => ({ ...prev, rootPath: root }));
         return listFolders(root).then((folders) => {
           setFolderEntries(folders);
-          const target = settings.last_batch || (folders[0]?.folder_path ?? "");
+          const target = settings.last_batch || (folders[0]?.entry_id ?? "");
           if (target) {
             setOptions((prev) => ({ ...prev, selectedBatchFolder: target }));
-            handleLoadBatch(target);
+            handleLoadBatch(target, folders);
           }
         });
       })
@@ -81,25 +81,30 @@ export const App: React.FC = () => {
     try {
       const folders = await listFolders(options.rootPath);
       setFolderEntries(folders);
-      if (folders.length > 0 && !folders.some((f) => f.folder_path === options.selectedBatchFolder)) {
-        handleLoadBatch(folders[0].folder_path);
+      if (folders.length > 0 && !folders.some((f) => f.entry_id === options.selectedBatchFolder)) {
+        handleLoadBatch(folders[0].entry_id, folders);
       }
     } catch (err: any) {
       setErrorMsg(err.message);
     }
   };
 
-  const handleLoadBatch = async (folderPath: string) => {
+  const handleLoadBatch = async (entryId: string, entries = folderEntries) => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const sum = await loadBatch({ folder_path: folderPath });
+      const match = entries.find((f) => f.entry_id === entryId);
+      const req = match?.csv_path
+        ? { csv_path: match.csv_path }
+        : { entry_id: entryId, folder_path: match?.folder_path || entryId };
+
+      const sum = await loadBatch(req);
       setSummary(sum);
 
       const auto = autoSelectMode(sum.modes);
       setOptions((prev) => ({
         ...prev,
-        selectedBatchFolder: folderPath,
+        selectedBatchFolder: entryId,
         selectedMode: auto.mode,
         waveTypes: auto.waveTypes,
         align: auto.mode === "比色項目" ? "off" : prev.align,
@@ -114,6 +119,7 @@ export const App: React.FC = () => {
   };
 
   const handleUploadFiles = async (files: File[]) => {
+
     setLoading(true);
     setErrorMsg(null);
     try {

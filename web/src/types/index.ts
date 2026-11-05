@@ -1,4 +1,5 @@
 export interface FolderEntry {
+  entry_id: string;
   label: string;
   folder_path: string;
   csv_path?: string | null;
@@ -6,6 +7,7 @@ export interface FolderEntry {
   has_csv: boolean;
   has_log: boolean;
 }
+
 
 export interface FileInfo {
   kind: string;

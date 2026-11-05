@@ -138,11 +138,12 @@ export const Sidebar: React.FC<Props> = ({
                 onChange={(e) => onSelectFolder(e.target.value)}
               >
                 {folderEntries.map((f) => (
-                  <option key={f.folder_path} value={f.folder_path}>
+                  <option key={f.entry_id} value={f.entry_id}>
                     {f.label}
                   </option>
                 ))}
               </select>
+
             </div>
           </>
         ) : (

@@ -122,3 +122,33 @@ def test_export_csv():
     wf_res = client.post("/api/export/waveforms-csv", json={"positions": [0, 1], "kind": "raw"})
     assert wf_res.status_code == 200
     assert wf_res.headers["content-type"].startswith("text/csv")
+
+
+def test_load_chromogenic_standalone_csv():
+    demo_csv = ROOT / "demo_data" / "261022_比色項目csvの例.csv"
+    if not demo_csv.is_file():
+        pytest.skip("261022_比色項目csvの例.csv not found")
+
+    res = client.post("/api/batches/load", json={"csv_path": str(demo_csv)})
+    assert res.status_code == 200
+    summary = res.json()
+    assert summary["modes"] == ["比色項目"]
+    assert summary["total_records"] > 0
+
+    # Query records
+    rec_res = client.post("/api/batches/records", json={"mode": "比色項目", "limit": 10})
+    assert rec_res.status_code == 200
+    recs = rec_res.json()["records"]
+    assert len(recs) > 0
+    assert recs[0]["測定モード"] == "比色項目"
+
+    # Derive waveforms with abs_slope
+    wf_res = client.post("/api/waveforms/derive", json={"positions": [0], "align": "off"})
+    assert wf_res.status_code == 200
+    wf_data = wf_res.json()
+    assert len(wf_data["series"]) == 1
+    s0 = wf_data["series"][0]
+    assert s0["mode"] == "比色項目"
+    assert s0["abs_slope"] is not None
+    assert len(s0["abs_slope"]) == len(s0["time"])
+

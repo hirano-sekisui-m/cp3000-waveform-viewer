@@ -54,6 +54,7 @@ def list_batch_folders(root_path: Optional[str] = Query(None)) -> List[FolderEnt
         if f_files.prof:
             lbl = str(f.relative_to(rootp)) if f != rootp else f.name
             entries.append(FolderEntry(
+                entry_id=str(f),
                 label=lbl,
                 folder_path=str(f),
                 csv_path=None,
@@ -65,6 +66,7 @@ def list_batch_folders(root_path: Optional[str] = Query(None)) -> List[FolderEnt
             for c in f_files.csv:
                 lbl = str(c.relative_to(rootp)) if (f == rootp or len(f_files.csv) > 1) else str(f.relative_to(rootp))
                 entries.append(FolderEntry(
+                    entry_id=str(c),
                     label=lbl,
                     folder_path=str(f),
                     csv_path=str(c),
@@ -93,40 +95,55 @@ def get_folder_files(folder_path: str) -> BatchFilesDetail:
 @router.post("/load", response_model=BatchSummaryResponse)
 def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
     """Load a batch from folder and options."""
-    if not req.folder_path:
-        raise HTTPException(status_code=400, detail="folder_path is required")
+    # Handle single CSV file batch
+    target_csv_str = req.csv_path or (req.entry_id if req.entry_id and req.entry_id.lower().endswith(".csv") else None)
+    if not target_csv_str and req.folder_path and req.folder_path.lower().endswith(".csv"):
+        target_csv_str = req.folder_path
 
-    folder = Path(clean_path(req.folder_path))
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Folder not found: {folder}")
+    if target_csv_str:
+        csv_p = Path(clean_path(target_csv_str))
+        if not csv_p.is_file():
+            raise HTTPException(status_code=400, detail=f"CSV file not found: {csv_p}")
+        prof_p = None
+        log_p = None
+        folder = csv_p.parent
+        batch_name = csv_p.stem
+    else:
+        if not req.folder_path and not req.entry_id:
+            raise HTTPException(status_code=400, detail="folder_path or entry_id is required")
 
-    files = find_batch_files(folder)
+        folder_str = req.folder_path or req.entry_id
+        folder = Path(clean_path(folder_str))
+        if not folder.exists():
+            raise HTTPException(status_code=400, detail=f"Folder not found: {folder}")
 
-    prof_p: Optional[Path] = None
-    if req.prof_file:
-        prof_p = folder / req.prof_file
-    elif files.prof:
-        prof_p = files.prof[0]
+        files = find_batch_files(folder)
 
-    csv_p: Optional[Path] = None
-    if req.csv_file:
-        csv_p = folder / req.csv_file
-    elif files.csv:
-        csv_p = files.csv[0]
+        prof_p = None
+        if req.prof_file:
+            prof_p = folder / req.prof_file
+        elif files.prof:
+            prof_p = files.prof[0]
 
-    log_p: Optional[Path] = None
-    if req.log_file:
-        log_p = folder / req.log_file
-    elif files.log and prof_p is not None:
-        log_p = files.log[0]
+        csv_p = None
+        if req.csv_file:
+            csv_p = folder / req.csv_file
+        elif files.csv:
+            csv_p = files.csv[0]
 
-    if prof_p is None and csv_p is None:
-        raise HTTPException(status_code=400, detail="No prof*.dat or *CSV_data.csv found")
+        log_p = None
+        if req.log_file:
+            log_p = folder / req.log_file
+        elif files.log and prof_p is not None:
+            log_p = files.log[0]
 
-    batch_name = folder.name if prof_p is not None else (csv_p.stem if csv_p else folder.name)
+        if prof_p is None and csv_p is None:
+            raise HTTPException(status_code=400, detail="No prof*.dat or *CSV_data.csv found")
+
+        batch_name = folder.name if prof_p is not None else (csv_p.stem if csv_p else folder.name)
 
     try:
-        batch = session_store.load_from_paths(
+        session_store.load_from_paths(
             prof_p, csv_p, log_p,
             mode=req.profile_mode,
             enc=req.csv_encoding,
@@ -136,7 +153,8 @@ def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
         raise HTTPException(status_code=500, detail=f"Failed to load batch: {e}")
 
     # Persist last batch
-    save_settings(last_batch=str(folder))
+    last_val = str(csv_p) if (prof_p is None and csv_p is not None) else str(folder)
+    save_settings(last_batch=last_val)
 
     return get_current_summary()
 

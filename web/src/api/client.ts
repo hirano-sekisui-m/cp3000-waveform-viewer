@@ -39,13 +39,16 @@ export async function listFolders(rootPath?: string): Promise<FolderEntry[]> {
 }
 
 export async function loadBatch(params: {
-  folder_path: string;
+  folder_path?: string;
+  csv_path?: string;
+  entry_id?: string;
   prof_file?: string;
   csv_file?: string;
   log_file?: string;
   profile_mode?: string;
   csv_encoding?: string;
 }): Promise<BatchSummary> {
+
   const res = await fetch(`${BASE_URL}/batches/load`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
