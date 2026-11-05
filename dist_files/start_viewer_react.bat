@@ -1,9 +1,10 @@
 @echo off
+chcp 932 >nul
 setlocal
 cd /d "%~dp0"
 
 if not exist "%~dp0runtime\python.exe" (
-    echo [ã‚¨ãƒ©ãƒ¼] å¿…è¦ãªãƒ•ã‚¡ã‚¤ãƒ«ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚å…ˆã« zip ã‚’ã™ã¹ã¦å±•é–‹ã—ã¦ãã ã•ã„ã€‚
+    echo [ƒGƒ‰[] •K—v‚Èƒtƒ@ƒCƒ‹‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñBæ‚É zip ‚ð‚·‚×‚Ä“WŠJ‚µ‚Ä‚­‚¾‚³‚¢B
     if not defined CP3000_NO_PAUSE pause
     exit /b 1
 )
@@ -24,8 +25,8 @@ if not "%PRE_RC%"=="0" (
     exit /b %PRE_RC%
 )
 
-echo CP3000 æ³¢å½¢ãƒ“ãƒ¥ãƒ¼ãƒ¯ãƒ¼ (React + FastAPI) ã‚’èµ·å‹•ã—ã¦ã„ã¾ã™...
-echo ã“ã®ç”»é¢ã‚’é–‰ã˜ã‚‹ã¨ãƒ“ãƒ¥ãƒ¼ãƒ¯ãƒ¼ãŒçµ‚äº†ã—ã¾ã™ã€‚
+echo CP3000 ”gŒ`ƒrƒ…[ƒ[ (React + FastAPI) ‚ð‹N“®‚µ‚Ä‚¢‚Ü‚·...
+echo ‚±‚Ì‰æ–Ê‚ð•Â‚¶‚é‚Æƒrƒ…[ƒ[‚ªI—¹‚µ‚Ü‚·B
 echo.
 
 start "" /b "%~dp0runtime\python.exe" "%CTL%" --root "%~dp0." wait-and-open --port %CP3000_PORT%
@@ -33,7 +34,7 @@ start "" /b "%~dp0runtime\python.exe" "%CTL%" --root "%~dp0." wait-and-open --po
 set "UVICORN_RC=%ERRORLEVEL%"
 if not "%UVICORN_RC%"=="0" (
     echo.
-    echo [ã‚¨ãƒ©ãƒ¼] ãƒ“ãƒ¥ãƒ¼ãƒ¯ãƒ¼ã®èµ·å‹•ã«å¤±æ•—ã—ã¾ã—ãŸã€‚ã‚¨ãƒ©ãƒ¼å†…å®¹ã‚’ user\last_error.log ã«ä¿å­˜ã—ã¾ã—ãŸã€‚
+    echo [ƒGƒ‰[] ƒrƒ…[ƒ[‚Ì‹N“®‚ÉŽ¸”s‚µ‚Ü‚µ‚½BƒGƒ‰[“à—e‚ð user\last_error.log ‚É•Û‘¶‚µ‚Ü‚µ‚½B
     if exist "%~dp0user\last_error.log" type "%~dp0user\last_error.log"
     if not defined CP3000_NO_PAUSE pause
     exit /b %UVICORN_RC%

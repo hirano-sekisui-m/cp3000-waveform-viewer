@@ -1,4 +1,5 @@
 @echo off
+chcp 932 >nul
 setlocal
 cd /d "%~dp0"
 

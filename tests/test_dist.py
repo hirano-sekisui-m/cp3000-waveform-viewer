@@ -351,3 +351,39 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     assert res_rt.returncode == 0
     assert "全体の入れ替えが必要です" in out_rt
     assert "app=0.2.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+
+
+def test_07_github_release_update_flow(extracted_jp_dir, tmp_path, monkeypatch):
+    """When user/update_source.txt is unset or placeholder, update_viewer defaults to GitHub Releases."""
+    user_dir = extracted_jp_dir / "user"
+    (user_dir / "update_source.txt").write_text(r"\\<サーバー>\<共有>\CP3000Viewer" + "\r\n", encoding="utf-8")
+    (extracted_jp_dir / "VERSION.txt").write_text("app=0.1.0 runtime=py3.12.10-r1\r\n", encoding="utf-8")
+
+    sys.path.insert(0, str(ROOT / "dist_files"))
+    import viewer_ctl
+
+    mock_zip = tmp_path / "mock_app_0.2.1.zip"
+    _make_mock_app_zip(extracted_jp_dir, mock_zip, "0.2.1")
+
+    def mock_resolve(repo):
+        return (
+            {"app": "0.2.1", "runtime": "py3.12.10-r1"},
+            "https://github.com/mock/repo/releases/latest",
+            {"name": "CP3000Viewer_app_0.2.1.zip", "url": "https://mock/asset"},
+        )
+
+    def mock_download(url, dest, headers=None, timeout=120.0):
+        shutil.copy2(mock_zip, dest)
+
+    monkeypatch.setattr(viewer_ctl, "resolve_github_latest", mock_resolve)
+    monkeypatch.setattr(viewer_ctl, "_download_file", mock_download)
+
+    # 1. Update from 0.1.0 to 0.2.1 via GitHub releases
+    rc = viewer_ctl.cmd_update(extracted_jp_dir, port=_free_port())
+    assert rc == 0
+    assert "app=0.2.1" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+
+    # 2. When already up to date
+    rc2 = viewer_ctl.cmd_update(extracted_jp_dir, port=_free_port())
+    assert rc2 == 0
+

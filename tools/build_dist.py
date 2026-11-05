@@ -50,6 +50,7 @@ PTH_CONTENT = (
 
 START_BAT_CONTENT = """\
 @echo off
+chcp 932 >nul
 setlocal
 cd /d "%~dp0"
 
@@ -99,6 +100,7 @@ exit /b 0
 
 UPDATE_BAT_CONTENT = """\
 @echo off
+chcp 932 >nul
 setlocal
 cd /d "%~dp0"
 
@@ -467,6 +469,7 @@ def make_app_zip(pkg_root: Path, zip_path: Path, include_top: bool = False) -> N
     items = [
         pkg_root / "README.txt",
         pkg_root / "start_viewer.bat",
+        pkg_root / "start_viewer_react.bat",
         pkg_root / "update_viewer.bat",
         pkg_root / "VERSION.txt",
     ]
