@@ -92,6 +92,9 @@ export async function queryRecords(params: {
   items?: string[];
   groups?: string[];
   search?: string;
+  request_no?: string;
+  meas_expr?: string;
+  proc_expr?: string;
   error_only?: boolean;
   mode?: string;
   limit?: number;

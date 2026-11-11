@@ -64,6 +64,9 @@ class RecordQuery(BaseModel):
     items: Optional[List[str]] = None
     groups: Optional[List[str]] = None
     search: Optional[str] = None
+    request_no: Optional[str] = None
+    meas_expr: Optional[str] = None
+    proc_expr: Optional[str] = None
     error_only: bool = False
     mode: Optional[str] = None
     limit: Optional[int] = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -301,6 +302,41 @@ def get_current_summary() -> BatchSummaryResponse:
 
 
 
+def _eval_numeric_expr(series: pd.Series, expr: str) -> pd.Series:
+    """Evaluate numeric condition on a pandas Series (e.g. '> 50', '<= 20', '10-50')."""
+    s = pd.to_numeric(series, errors="coerce")
+    trimmed = expr.strip()
+    if not trimmed:
+        return pd.Series(True, index=series.index)
+
+    # Range: "10-50", "10..50", "10～50"
+    m_range = re.match(r"^(-?\d+(?:\.\d+)?)\s*(?:-|\.\.|～|~)\s*(-?\d+(?:\.\d+)?)$", trimmed)
+    if m_range:
+        lo = float(m_range.group(1))
+        hi = float(m_range.group(2))
+        return s.notna() & (s >= min(lo, hi)) & (s <= max(lo, hi))
+
+    # Operator + number: ">= 50", "< 10", "= 5", "50"
+    m_op = re.match(r"^(>=|<=|>|<|==|=|!=)?\s*(-?\d+(?:\.\d+)?)$", trimmed)
+    if m_op:
+        op = m_op.group(1) or "="
+        target = float(m_op.group(2))
+        if op == ">":
+            return s.notna() & (s > target)
+        elif op == ">=":
+            return s.notna() & (s >= target)
+        elif op == "<":
+            return s.notna() & (s < target)
+        elif op == "<=":
+            return s.notna() & (s <= target)
+        elif op in ("=", "=="):
+            return s.notna() & np.isclose(s, target, atol=1e-5)
+        elif op == "!=":
+            return s.notna() & (~np.isclose(s, target, atol=1e-5))
+
+    return pd.Series(True, index=series.index)
+
+
 @router.post("/records", response_model=RecordsListResponse)
 def query_records(
     query: RecordQuery,
@@ -331,6 +367,27 @@ def query_records(
         view = view[view["測定モード"] == query.mode]
     if query.error_only and "エラーフラグ" in view.columns:
         view = view[view["エラーフラグ"] != 0]
+
+    if query.request_no:
+        req_cols = [c for c in ["依頼No", "内部依頼No"] if c in view.columns]
+        if req_cols:
+            parts = [p.strip() for p in re.split(r"[,、\s]+", query.request_no) if p.strip()]
+            if parts:
+                hit = np.zeros(len(view), dtype=bool)
+                for c in req_cols:
+                    for p in parts:
+                        hit |= view[c].astype(str).str.contains(p, case=False, regex=False, na=False).to_numpy()
+                view = view[hit]
+
+    if query.meas_expr and "測定値" in view.columns:
+        mask = _eval_numeric_expr(view["測定値"], query.meas_expr)
+        view = view[mask]
+
+    if query.proc_expr:
+        proc_col = "処理値" if "処理値" in view.columns else ("Tc2(計算)" if "Tc2(計算)" in view.columns else None)
+        if proc_col:
+            mask = _eval_numeric_expr(view[proc_col], query.proc_expr)
+            view = view[mask]
 
     if query.search:
         search_cols = [c for c in ["依頼No", "SID", "検体名", "検体ﾊﾞｰｺｰﾄﾞ", "内部依頼No", "項目名"] if c in view.columns]

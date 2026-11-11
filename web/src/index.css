@@ -363,7 +363,7 @@ button, input, select {
 /* Two columns layout in overlay */
 .overlay-layout {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 390px 1fr;
   gap: 1.25rem;
   min-height: 580px;
 }

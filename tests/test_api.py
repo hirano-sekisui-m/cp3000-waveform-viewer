@@ -207,3 +207,44 @@ def test_load_chromogenic_standalone_csv():
     assert exp_res.headers["content-type"].startswith("text/csv")
 
 
+def test_record_query_filters(demo_batch_dir):
+    # Reload b6000 batch
+    client.post("/api/batches/load", json={"folder_path": str(demo_batch_dir / "b6000")})
+
+    # 1. Filter by item
+    res = client.post("/api/batches/records", json={"items": ["PT"]})
+    assert res.status_code == 200
+    recs = res.json()["records"]
+    assert len(recs) > 0
+    assert all(r["項目名"] == "PT" for r in recs)
+
+    # 2. Filter by request_no
+    res = client.post("/api/batches/records", json={"request_no": "0001"})
+    assert res.status_code == 200
+    recs = res.json()["records"]
+    assert len(recs) > 0
+    assert all("0001" in str(r["依頼No"]) for r in recs)
+
+    # 3. Filter by meas_expr (> 20)
+    res = client.post("/api/batches/records", json={"meas_expr": "> 20"})
+    assert res.status_code == 200
+    recs = res.json()["records"]
+    assert len(recs) > 0
+    assert all(float(r["測定値"]) > 20 for r in recs)
+
+    # 4. Filter by meas_expr range (10 - 20)
+    res = client.post("/api/batches/records", json={"meas_expr": "10-20"})
+    assert res.status_code == 200
+    recs = res.json()["records"]
+    assert len(recs) > 0
+    assert all(10 <= float(r["測定値"]) <= 20 for r in recs)
+
+    # 5. Filter by proc_expr (Tc2(計算) > 10)
+    res = client.post("/api/batches/records", json={"proc_expr": "> 10"})
+    assert res.status_code == 200
+    recs = res.json()["records"]
+    assert len(recs) > 0
+    assert all(float(r["Tc2(計算)"]) > 10 for r in recs if r["Tc2(計算)"] is not None)
+
+
+

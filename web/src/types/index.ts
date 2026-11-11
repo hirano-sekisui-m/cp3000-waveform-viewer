@@ -47,6 +47,7 @@ export interface RecordItem {
   内部依頼No?: string | null;
   項目番号?: number | null;
   測定値?: string | number | null;
+  処理値?: string | number | null;
   "Tc2(計算)"?: number | null;
   "Te2(計算)"?: number | null;
   属性?: string | null;

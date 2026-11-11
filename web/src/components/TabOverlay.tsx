@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
 import { Download, CheckSquare } from "lucide-react";
 import { BatchSummary, RecordItem, WaveformSeries } from "../types";
 import { deriveWaveforms, downloadWaveformsCsv } from "../api/client";
 import { CHROMO_WAVE_TYPES, COAG_WAVE_TYPES, SidebarOptions } from "./Sidebar";
 import { WindowSelector } from "./WindowSelector";
+import { RecordFilterBar } from "./RecordFilterBar";
+import { INITIAL_RECORD_FILTER, RecordFilterState, filterRecords } from "../utils/filter";
 
 interface Props {
   summary: BatchSummary;
@@ -30,6 +32,9 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
   const [loading, setLoading] = useState(false);
   const [downloadKind, setDownloadKind] = useState("raw");
 
+  // Filtering state
+  const [filter, setFilter] = useState<RecordFilterState>(INITIAL_RECORD_FILTER);
+
   // Drag selection state
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
@@ -38,6 +43,28 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
 
   const isChromogenic = options.selectedMode === "比色項目";
   const waveTypeDict = isChromogenic ? CHROMO_WAVE_TYPES : COAG_WAVE_TYPES;
+
+  // Extract available item names for filter
+  const availableItems = useMemo(() => {
+    if (summary.items_list && summary.items_list.length > 0) {
+      return summary.items_list;
+    }
+    const set = new Set<string>();
+    records.forEach((r) => {
+      if (r.項目名) set.add(r.項目名);
+    });
+    return Array.from(set).sort();
+  }, [summary.items_list, records]);
+
+  // Reset filters when batch name or mode changes
+  useEffect(() => {
+    setFilter(INITIAL_RECORD_FILTER);
+  }, [summary.name, options.selectedMode]);
+
+  // Filtered records
+  const filteredRecords = useMemo(() => {
+    return filterRecords(records, filter);
+  }, [records, filter]);
 
   // Global mouse up to reliably stop drag even if mouse leaves the table
   useEffect(() => {
@@ -106,13 +133,14 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
     if (e.button !== 0) return; // left click only
     e.preventDefault(); // prevent native browser text selection
 
-    const currentPos = records[index]._pos;
+    if (index < 0 || index >= filteredRecords.length) return;
+    const currentPos = filteredRecords[index]._pos;
 
     if (e.shiftKey && lastClickedIndex !== null) {
       // Shift + click: select range from lastClickedIndex to index
       const start = Math.min(lastClickedIndex, index);
       const end = Math.max(lastClickedIndex, index);
-      const range = records.slice(start, end + 1).map((r) => r._pos);
+      const range = filteredRecords.slice(start, end + 1).map((r) => r._pos);
       const isAppend = e.ctrlKey || e.metaKey;
       const base = isAppend ? selectedPositions : [];
       const merged = Array.from(new Set([...base, ...range])).slice(0, 300);
@@ -142,16 +170,26 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
 
     const start = Math.min(dragStartIndex, index);
     const end = Math.max(dragStartIndex, index);
-    const range = records.slice(start, end + 1).map((r) => r._pos);
+    const range = filteredRecords.slice(start, end + 1).map((r) => r._pos);
     const merged = Array.from(new Set([...baseSelection, ...range])).slice(0, 300);
     setSelectedPositions(merged);
   };
 
   const handleSelectAllVisible = () => {
-    if (selectedPositions.length === records.length) {
-      setSelectedPositions([]);
+    const visiblePositions = filteredRecords.slice(0, 300).map((r) => r._pos);
+    const isAllVisibleSelected =
+      visiblePositions.length > 0 &&
+      visiblePositions.every((p) => selectedPositions.includes(p));
+
+    if (isAllVisibleSelected) {
+      // Deselect all visible
+      setSelectedPositions((prev) => prev.filter((p) => !visiblePositions.includes(p)));
     } else {
-      setSelectedPositions(records.slice(0, 300).map((r) => r._pos));
+      // Select all visible (up to 300)
+      setSelectedPositions((prev) => {
+        const merged = Array.from(new Set([...prev, ...visiblePositions])).slice(0, 300);
+        return merged;
+      });
     }
   };
 
@@ -296,17 +334,36 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
       <div className="overlay-layout">
         {/* Left: Waveform List Table */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Filter Bar Component */}
+          <RecordFilterBar
+            isChromogenic={isChromogenic}
+            availableItems={availableItems}
+            filter={filter}
+            onChangeFilter={setFilter}
+            totalCount={records.length}
+            filteredCount={filteredRecords.length}
+          />
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>
-              波形一覧 ({records.length} 件)
+            <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-main)" }}>
+              {filteredRecords.length === records.length
+                ? `波形一覧 (${records.length} 件)`
+                : `波形一覧 (絞込: ${filteredRecords.length} / 全 ${records.length} 件)`}
             </span>
-            <button className="btn btn-outline btn-sm" onClick={handleSelectAllVisible}>
+            <button className="btn btn-outline btn-sm" onClick={handleSelectAllVisible} style={{ padding: "3px 8px" }}>
               <CheckSquare size={12} />
-              <span>{selectedPositions.length === records.length ? "解除" : "先頭選択"}</span>
+              <span>
+                {filteredRecords.length > 0 &&
+                filteredRecords.slice(0, 300).every((r) => selectedPositions.includes(r._pos))
+                  ? "選択解除"
+                  : filteredRecords.length !== records.length
+                  ? "絞り込みを選択"
+                  : "先頭選択"}
+              </span>
             </button>
           </div>
 
-          <div className="table-container" style={{ height: "540px" }}>
+          <div className="table-container" style={{ height: "460px" }}>
             <table className="data-table">
               <thead>
                 <tr>
@@ -318,28 +375,36 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
                 </tr>
               </thead>
               <tbody>
-                {records.map((r, i) => {
-                  const isSelected = selectedPositions.includes(r._pos);
-                  return (
-                    <tr
-                      key={r.No}
-                      className={isSelected ? "selected" : ""}
-                      onMouseDown={(e) => handleMouseDown(e, i)}
-                      onMouseEnter={() => handleMouseEnter(i)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <td>{r.No}</td>
-                      <td>{r.依頼No || r.内部依頼No || "–"}</td>
-                      <td>{r.項目名 || "–"}</td>
-                      <td>
-                        {isChromogenic
-                          ? (r.処理値 != null ? r.処理値 : "–")
-                          : (r["Tc2(計算)"] != null ? r["Tc2(計算)"] : "–")}
-                      </td>
-                      <td>{r.測定値 != null ? r.測定値 : "–"}</td>
-                    </tr>
-                  );
-                })}
+                {filteredRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)" }}>
+                      条件に一致する波形がありません
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRecords.map((r, i) => {
+                    const isSelected = selectedPositions.includes(r._pos);
+                    return (
+                      <tr
+                        key={r.No}
+                        className={isSelected ? "selected" : ""}
+                        onMouseDown={(e) => handleMouseDown(e, i)}
+                        onMouseEnter={() => handleMouseEnter(i)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td>{r.No}</td>
+                        <td>{r.依頼No || r.内部依頼No || "–"}</td>
+                        <td>{r.項目名 || "–"}</td>
+                        <td>
+                          {isChromogenic
+                            ? (r.処理値 != null ? r.処理値 : "–")
+                            : (r["Tc2(計算)"] != null ? r["Tc2(計算)"] : "–")}
+                        </td>
+                        <td>{r.測定値 != null ? r.測定値 : "–"}</td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
