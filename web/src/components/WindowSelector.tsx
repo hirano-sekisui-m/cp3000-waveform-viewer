@@ -22,6 +22,7 @@ export const WindowSelector: React.FC<Props> = ({
       timePoints && timePoints.length > 0
         ? timePoints
         : Array.from({ length: 60 }, (_, i) => i * 2.0);
+    const safeRefIdx = Math.min(refPointIdx, Math.max(0, points.length - 1));
 
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8125rem" }}>
@@ -29,8 +30,8 @@ export const WindowSelector: React.FC<Props> = ({
         <select
           className="select-box"
           style={{ width: "auto", padding: "0.2rem 0.6rem", fontSize: "0.8125rem", fontWeight: 500 }}
-          value={refPointIdx}
-          onChange={(e) => onChangeRefPoint?.(parseInt(e.target.value))}
+          value={safeRefIdx}
+          onChange={(e) => onChangeRefPoint?.(parseInt(e.target.value, 10))}
         >
           {points.map((sec, i) => (
             <option key={i} value={i}>

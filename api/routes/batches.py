@@ -10,7 +10,14 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 import numpy as np
 import pandas as pd
 
-from api.config import DEMO_DIR, load_settings, save_settings
+from api.config import (
+    DATA_SOURCE_DIR,
+    DEMO_DIR,
+    ROOT_DIR,
+    get_default_root_path,
+    load_settings,
+    save_settings,
+)
 from api.schemas.batch import (
     BatchFilesDetail,
     BatchSummaryResponse,
@@ -31,13 +38,16 @@ def list_batch_folders(root_path: Optional[str] = Query(None)) -> List[FolderEnt
     """Find batch candidate folders under root_path."""
     if not root_path:
         settings = load_settings()
-        root_path = settings.get("root") or str(DEMO_DIR)
+        root_path = settings.get("root") or get_default_root_path()
 
     clean_root = clean_path(root_path)
     if not clean_root:
         return []
 
     rootp = Path(clean_root)
+    if not rootp.is_absolute():
+        rootp = (ROOT_DIR / rootp).resolve()
+
     if not rootp.exists():
         return []
 
@@ -102,6 +112,8 @@ def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
 
     if target_csv_str:
         csv_p = Path(clean_path(target_csv_str))
+        if not csv_p.is_absolute():
+            csv_p = (ROOT_DIR / csv_p).resolve()
         if not csv_p.is_file():
             raise HTTPException(status_code=400, detail=f"CSV file not found: {csv_p}")
         prof_p = None
@@ -114,6 +126,8 @@ def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
 
         folder_str = req.folder_path or req.entry_id
         folder = Path(clean_path(folder_str))
+        if not folder.is_absolute():
+            folder = (ROOT_DIR / folder).resolve()
         if not folder.exists():
             raise HTTPException(status_code=400, detail=f"Folder not found: {folder}")
 
@@ -209,7 +223,7 @@ def get_current_summary() -> BatchSummaryResponse:
     err_count = int((table["エラーフラグ"] != 0).sum()) if "エラーフラグ" in table.columns else 0
 
     file_infos: List[FileInfo] = []
-    for kind, p in [("prof", batch.prof_path), ("CSV", batch.csv_path), ("LOG", batch.log_path)]:
+    for kind, p in [("prof", batch.prof_path), ("csv", batch.csv_path), ("log", batch.log_path)]:
         if p is None:
             file_infos.append(FileInfo(kind=kind))
         else:
@@ -225,12 +239,25 @@ def get_current_summary() -> BatchSummaryResponse:
     items = sorted(table["項目名"].dropna().unique().tolist()) if "項目名" in table.columns else []
 
     time_pts: List[float] = []
+    chromo_time_pts: List[float] = []
+
+    if "測定モード" in table.columns and (table["測定モード"] == "比色項目").any():
+        chromo_rows = table[table["測定モード"] == "比色項目"]
+        first_chromo_pos = int(chromo_rows.iloc[0]["No"]) - 1
+        if 0 <= first_chromo_pos < len(batch.records):
+            cr = batch.records[first_chromo_pos]
+            if cr.time is not None and len(cr.time):
+                chromo_time_pts = [float(round(x, 1)) for x in cr.time]
+
     if batch.time_points is not None and len(batch.time_points):
         time_pts = [float(round(x, 1)) for x in batch.time_points]
     elif len(batch.records):
         longest = max(batch.records, key=lambda r: len(r.time) if r.time is not None else 0)
         if longest.time is not None:
             time_pts = [float(round(x, 1)) for x in longest.time]
+
+    if not chromo_time_pts and "比色項目" in batch.modes:
+        chromo_time_pts = time_pts
 
     return BatchSummaryResponse(
         name=batch.name,
@@ -248,6 +275,7 @@ def get_current_summary() -> BatchSummaryResponse:
         groups_list=groups,
         columns=list(table.columns),
         time_points=time_pts,
+        chromo_time_points=chromo_time_pts,
     )
 
 

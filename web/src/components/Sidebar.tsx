@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Folder, Upload, Settings2, Sliders, RefreshCw, X } from "lucide-react";
+import { Folder, Upload, Settings2, Sliders, RefreshCw, X, HelpCircle } from "lucide-react";
 import { FolderEntry } from "../types";
 
 export interface SidebarOptions {
@@ -25,7 +25,7 @@ interface Props {
   options: SidebarOptions;
   onChangeOptions: (opts: Partial<SidebarOptions>) => void;
   folderEntries: FolderEntry[];
-  onRefreshFolders: () => void;
+  onRefreshFolders: (customRoot?: string) => void;
   onSelectFolder: (folder: string) => void;
   onUploadFiles: (files: File[]) => void;
   availableModes: string[];
@@ -44,7 +44,6 @@ export const CHROMO_WAVE_TYPES: Record<string, string> = {
   raw: "生波形 (0.1 mAbs)",
   base_aligned: "吸光度変化 (基準点=0)",
   abs_slope: "吸光度変化率 (mAbs/min.)",
-  scaled: "吸光度変化 (0–100%)",
 };
 
 
@@ -62,9 +61,12 @@ export const Sidebar: React.FC<Props> = ({
 }) => {
 
   const [showCalcSettings, setShowCalcSettings] = useState(false);
+  const [showRootTip, setShowRootTip] = useState(false);
+  const [showBatchTip, setShowBatchTip] = useState(false);
   const isChromogenic = options.selectedMode === "比色項目";
 
   const waveTypeDict = isChromogenic ? CHROMO_WAVE_TYPES : COAG_WAVE_TYPES;
+  const selectedEntry = folderEntries.find((f) => f.entry_id === options.selectedBatchFolder);
 
   const handleToggleWaveType = (type: string) => {
     const current = options.waveTypes;
@@ -118,38 +120,141 @@ export const Sidebar: React.FC<Props> = ({
           <>
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span className="sidebar-label">親フォルダ</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span className="sidebar-label" style={{ marginBottom: 0 }}>親フォルダ</span>
+                  <button
+                    type="button"
+                    className="tooltip-icon-btn"
+                    onMouseEnter={() => setShowRootTip(true)}
+                    onMouseLeave={() => setShowRootTip(false)}
+                    onClick={() => setShowRootTip((v) => !v)}
+                    title="親フォルダの配置ガイダンスを表示 (クリックまたはホバー)"
+                    aria-label="親フォルダの配置ガイダンス"
+                  >
+                    <HelpCircle size={14} />
+                  </button>
+                </div>
                 <button
                   className="btn btn-outline btn-sm"
-                  onClick={onRefreshFolders}
+                  onClick={() => onRefreshFolders()}
                   title="フォルダ一覧を更新"
                 >
                   <RefreshCw size={12} />
                 </button>
               </div>
+
+              {showRootTip && (
+                <div className="sidebar-tooltip-box">
+                  <div style={{ fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span>📁</span>
+                    <span>親フォルダ・データ配置ガイダンス</span>
+                  </div>
+                  <div>
+                    アプリ起動ファイル（<code>.bat</code>）と同じフォルダ下にある <code>data-source/</code> に測定データを配置すると、ここから自動検出されます。<br />
+                    サブフォルダに置かれたバッチやCSVも自動認識されます。任意のフルパス指定も可能です。
+                  </div>
+                </div>
+              )}
+
               <input
                 type="text"
                 className="input-text"
                 value={options.rootPath}
                 onChange={(e) => onChangeOptions({ rootPath: e.target.value })}
-                placeholder="例: demo_data"
+                placeholder="例: data-source または demo_data"
               />
+
+              <div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+                <button
+                  type="button"
+                  className="btn-quick-path"
+                  onClick={() => {
+                    onChangeOptions({ rootPath: "data-source" });
+                    onRefreshFolders("data-source");
+                  }}
+                  title="data-source フォルダを指定して更新"
+                >
+                  📁 data-source
+                </button>
+                <button
+                  type="button"
+                  className="btn-quick-path"
+                  onClick={() => {
+                    onChangeOptions({ rootPath: "demo_data" });
+                    onRefreshFolders("demo_data");
+                  }}
+                  title="デモデータフォルダを指定して更新"
+                >
+                  🧪 demo_data
+                </button>
+              </div>
             </div>
 
-            <div>
-              <span className="sidebar-label">バッチを選択 ({folderEntries.length} 件)</span>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
+                <span className="sidebar-label" style={{ marginBottom: 0 }}>
+                  バッチを選択 ({folderEntries.length} 件)
+                </span>
+                <button
+                  type="button"
+                  className="tooltip-icon-btn"
+                  onMouseEnter={() => setShowBatchTip(true)}
+                  onMouseLeave={() => setShowBatchTip(false)}
+                  onClick={() => setShowBatchTip((v) => !v)}
+                  title="対応データ形式の説明を表示 (クリックまたはホバー)"
+                  aria-label="対応データ形式の説明"
+                >
+                  <HelpCircle size={14} />
+                </button>
+              </div>
+
+              {showBatchTip && (
+                <div className="sidebar-tooltip-box">
+                  <div style={{ fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span>📦</span>
+                    <span>対応しているデータ形式</span>
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    ① <strong>バッチ（3点セット）</strong>:<br />
+                    <code>prof*.dat</code>（生波形）+ <code>*CSV_data.csv</code>（測定値）+ <code>LOG*.dat</code>（装置ログ）を含むフォルダ
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    ② <strong>CSVファイル単体</strong>:<br />
+                    <code>*CSV_data.csv</code> などのCSVファイル単体
+                  </div>
+                  <div style={{ opacity: 0.85, fontSize: "0.7rem" }}>
+                    ※どちらの形式も選択するだけで自動判別され、そのまま読み込めます。
+                  </div>
+                </div>
+              )}
+
               <select
                 className="select-box"
                 value={options.selectedBatchFolder}
                 onChange={(e) => onSelectFolder(e.target.value)}
               >
-                {folderEntries.map((f) => (
-                  <option key={f.entry_id} value={f.entry_id}>
-                    {f.label}
-                  </option>
-                ))}
+                {folderEntries.length === 0 ? (
+                  <option value="">(バッチまたはCSVが見つかりません)</option>
+                ) : (
+                  folderEntries.map((f) => {
+                    const tag = f.has_prof ? "📁 [バッチ]" : "📄 [CSV]";
+                    return (
+                      <option key={f.entry_id} value={f.entry_id}>
+                        {`${tag} ${f.label}`}
+                      </option>
+                    );
+                  })
+                )}
               </select>
 
+              {selectedEntry && (
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>形式:</span>
+                  <span style={{ fontWeight: 600, color: selectedEntry.has_prof ? "#166534" : "#1e40af" }}>
+                    {selectedEntry.has_prof ? "バッチフォルダ (prof + CSV 連携)" : "CSVファイル単体"}
+                  </span>
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -177,7 +282,7 @@ export const Sidebar: React.FC<Props> = ({
               const newMode = e.target.value;
               const newWaveTypes =
                 newMode === "比色項目"
-                  ? ["raw", "scaled", "abs_slope"]
+                  ? ["raw", "base_aligned", "abs_slope"]
                   : ["raw", "scaled", "slope"];
               onChangeOptions({
                 selectedMode: newMode,

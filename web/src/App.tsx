@@ -44,9 +44,24 @@ export const App: React.FC = () => {
   useEffect(() => {
     getSettings()
       .then((settings) => {
-        const root = settings.root || "demo_data";
+        const root = settings.root || "data-source";
         setOptions((prev) => ({ ...prev, rootPath: root }));
         return listFolders(root).then((folders) => {
+          if (folders.length === 0 && (!settings.root || settings.root === "data-source")) {
+            return listFolders("demo_data").then((demoFolders) => {
+              if (demoFolders.length > 0) {
+                setOptions((prev) => ({ ...prev, rootPath: "demo_data" }));
+                setFolderEntries(demoFolders);
+                const target = settings.last_batch || (demoFolders[0]?.entry_id ?? "");
+                if (target) {
+                  setOptions((prev) => ({ ...prev, selectedBatchFolder: target }));
+                  handleLoadBatch(target, demoFolders);
+                }
+                return;
+              }
+              setFolderEntries([]);
+            });
+          }
           setFolderEntries(folders);
           const target = settings.last_batch || (folders[0]?.entry_id ?? "");
           if (target) {
@@ -78,9 +93,13 @@ export const App: React.FC = () => {
     };
   };
 
-  const handleRefreshFolders = async () => {
+  const handleRefreshFolders = async (customRoot?: string) => {
     try {
-      const folders = await listFolders(options.rootPath);
+      const rootToUse = customRoot ?? options.rootPath;
+      if (customRoot) {
+        setOptions((prev) => ({ ...prev, rootPath: customRoot }));
+      }
+      const folders = await listFolders(rootToUse);
       setFolderEntries(folders);
       if (folders.length > 0 && !folders.some((f) => f.entry_id === options.selectedBatchFolder)) {
         handleLoadBatch(folders[0].entry_id, folders);
@@ -158,6 +177,11 @@ export const App: React.FC = () => {
 
   const handleChangeOptions = (partial: Partial<SidebarOptions>) => {
     const updated = { ...options, ...partial };
+    if (updated.selectedMode === "比色項目" && updated.waveTypes.includes("scaled")) {
+      updated.waveTypes = updated.waveTypes
+        .map((t) => (t === "scaled" ? "base_aligned" : t))
+        .filter((t, i, arr) => arr.indexOf(t) === i);
+    }
     setOptions(updated);
 
     if (partial.rootPath !== undefined) {
@@ -267,7 +291,13 @@ export const App: React.FC = () => {
         onSelectFolder={handleLoadBatch}
         onUploadFiles={handleUploadFiles}
         availableModes={summary?.modes || []}
-        timePoints={summary?.time_points}
+        timePoints={
+          options.selectedMode === "比色項目"
+            ? (summary?.chromo_time_points && summary.chromo_time_points.length > 0
+                ? summary.chromo_time_points
+                : summary?.time_points)
+            : summary?.time_points
+        }
       />
     </div>
   );

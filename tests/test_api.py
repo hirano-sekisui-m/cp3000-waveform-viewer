@@ -73,6 +73,21 @@ def test_summary():
     assert summary["total_records"] > 0
     assert "APTT" in summary["items_list"] or "PT" in summary["items_list"]
 
+    # Verify summary.files format
+    files = {f["kind"].lower(): f for f in summary["files"]}
+    assert "prof" in files
+    assert files["prof"]["filename"] is not None
+    assert "csv" in files
+    assert files["csv"]["filename"] is not None
+
+
+def test_folders_default_root():
+    # Calling /api/batches/folders without root_path should succeed and resolve default root
+    res = client.get("/api/batches/folders")
+    assert res.status_code == 200
+    folders = res.json()
+    assert isinstance(folders, list)
+
 
 def test_query_records():
     res = client.post("/api/batches/records", json={"limit": 5})
@@ -135,6 +150,11 @@ def test_load_chromogenic_standalone_csv():
     assert summary["modes"] == ["比色項目"]
     assert summary["total_records"] > 0
 
+    # Verify summary.files for standalone CSV: prof should be None, csv should be loaded
+    files = {f["kind"].lower(): f for f in summary["files"]}
+    assert files["prof"]["filename"] is None
+    assert files["csv"]["filename"] == demo_csv.name
+
     # Query records
     rec_res = client.post("/api/batches/records", json={"mode": "比色項目", "limit": 10})
     assert rec_res.status_code == 200
@@ -154,8 +174,9 @@ def test_load_chromogenic_standalone_csv():
     assert s0["base_aligned"] is not None
     assert abs(s0["base_aligned"][4]) < 1e-6
 
-    # Test summary has time_points
+    # Test summary has time_points and chromo_time_points
     assert len(summary["time_points"]) > 0
+    assert len(summary["chromo_time_points"]) > 0
 
     # Detail test
     det_res = client.get(f"/api/waveforms/detail/{recs[0]['No']}?ref_point_idx=4")

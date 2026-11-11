@@ -167,8 +167,17 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
   };
 
   // Build Plotly layout and traces
-  const waveTypes = options.waveTypes.filter((t) => t in waveTypeDict);
+  const waveTypes = options.waveTypes
+    .map((t) => (isChromogenic && t === "scaled" ? "base_aligned" : t))
+    .filter((t) => t in waveTypeDict);
   const numPanels = Math.max(1, waveTypes.length);
+
+  const chromoTimePoints =
+    seriesData.length > 0 && seriesData[0].time && seriesData[0].time.length > 0
+      ? (seriesData[0].time as number[])
+      : summary.chromo_time_points && summary.chromo_time_points.length > 0
+      ? summary.chromo_time_points
+      : summary.time_points;
 
   const traces: any[] = [];
 
@@ -223,6 +232,28 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
     });
   });
 
+  const shapes: any[] = [];
+  if (
+    isChromogenic &&
+    chromoTimePoints &&
+    options.chromoRefPointIdx >= 0 &&
+    options.chromoRefPointIdx < chromoTimePoints.length
+  ) {
+    const refSec = chromoTimePoints[options.chromoRefPointIdx];
+    if (refSec != null && isFinite(refSec)) {
+      shapes.push({
+        type: "line",
+        xref: "x",
+        yref: "paper",
+        x0: refSec,
+        x1: refSec,
+        y0: 0,
+        y1: 1,
+        line: { color: "#2563eb", width: 1.5, dash: "dash" },
+      });
+    }
+  }
+
   const layout: any = {
     autosize: true,
     height: Math.max(500, numPanels * 220),
@@ -232,6 +263,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
     hovermode: "x unified",
     legend: { orientation: "h", y: 1.1, x: 0 },
     grid: { rows: numPanels, columns: 1, pattern: "coupled" },
+    shapes,
   };
 
   waveTypes.forEach((kind, panelIdx) => {
@@ -337,7 +369,7 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
               onChange={(val) => onChangeOptions({ windowEndSec: val })}
               refPointIdx={options.chromoRefPointIdx}
               onChangeRefPoint={(idx) => onChangeOptions({ chromoRefPointIdx: idx })}
-              timePoints={summary.time_points}
+              timePoints={isChromogenic ? chromoTimePoints : summary.time_points}
             />
 
 

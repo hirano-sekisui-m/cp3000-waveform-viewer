@@ -61,6 +61,22 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
   const traces: any[] = [];
   const c = detail.calculated;
 
+  const chromoTimePoints =
+    detail && detail.time && detail.time.length > 0
+      ? detail.time.filter((x): x is number => x != null)
+      : summary.chromo_time_points && summary.chromo_time_points.length > 0
+      ? summary.chromo_time_points
+      : summary.time_points;
+
+  const currentRefTime =
+    detail && detail.time && options.chromoRefPointIdx >= 0 && options.chromoRefPointIdx < detail.time.length
+      ? detail.time[options.chromoRefPointIdx]
+      : null;
+  const currentRefRaw =
+    detail && detail.raw && options.chromoRefPointIdx >= 0 && options.chromoRefPointIdx < detail.raw.length
+      ? detail.raw[options.chromoRefPointIdx]
+      : null;
+
   if (isChromogenic) {
     // 1. Raw
     traces.push({
@@ -134,7 +150,7 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
     });
   }
 
-  // Vertical line shapes (Coagulation only)
+  // Vertical line shapes
   const shapes: any[] = [];
   if (!isChromogenic) {
     const addVline = (x: number | null | undefined, color: string, dash = "solid") => {
@@ -156,6 +172,23 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
     addVline(c.Tc2, "#ef4444", "dash");
     addVline(c.Te2, "#f97316", "dash");
     addVline(c.device_val, "#d97706", "solid");
+  } else if (detail && detail.time) {
+    const refIdx = options.chromoRefPointIdx;
+    if (refIdx >= 0 && refIdx < detail.time.length) {
+      const refTime = detail.time[refIdx];
+      if (refTime != null && isFinite(refTime)) {
+        shapes.push({
+          type: "line",
+          xref: "x",
+          yref: "paper",
+          x0: refTime,
+          x1: refTime,
+          y0: 0,
+          y1: 1,
+          line: { color: "#2563eb", width: 1.5, dash: "dash" },
+        });
+      }
+    }
   }
 
   const layout: any = {
@@ -234,7 +267,7 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
           onChange={(val) => onChangeOptions({ windowEndSec: val })}
           refPointIdx={options.chromoRefPointIdx}
           onChangeRefPoint={(idx) => onChangeOptions({ chromoRefPointIdx: idx })}
-          timePoints={summary.time_points}
+          timePoints={isChromogenic ? chromoTimePoints : summary.time_points}
         />
       </div>
 
@@ -255,7 +288,13 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
             style={{ width: "100%", height: "100%" }}
             config={{ displaylogo: false, responsive: true }}
           />
-          {!isChromogenic && (
+          {isChromogenic ? (
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
+              青の破線 = 0 点の基準ポイント (
+              {currentRefTime != null ? `${currentRefTime.toFixed(1)} 秒時点` : "0 秒"}
+              )
+            </div>
+          ) : (
             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
               縦線: 点線 = Tc1 / Te1、破線 = Tc2 / Te2、橙の実線 = 装置の測定値(CSV)
             </div>
@@ -304,6 +343,20 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
                   </>
                 ) : (
                   <>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>0点基準ポイント</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        第 {options.chromoRefPointIdx + 1} 点 (
+                        {currentRefTime != null ? `${currentRefTime.toFixed(1)} s` : "–"}
+                        )
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>基準点吸光度</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {currentRefRaw != null ? `${currentRefRaw}` : "–"}
+                      </td>
+                    </tr>
                     <tr>
                       <td style={{ color: "var(--text-muted)", padding: "4px 0" }}>装置の測定値</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{c.device_val != null ? `${c.device_val}` : "–"}</td>

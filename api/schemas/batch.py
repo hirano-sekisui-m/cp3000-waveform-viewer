@@ -56,6 +56,7 @@ class BatchSummaryResponse(BaseModel):
     groups_list: List[str] = []
     columns: List[str] = []
     time_points: List[float] = []
+    chromo_time_points: List[float] = []
 
 
 

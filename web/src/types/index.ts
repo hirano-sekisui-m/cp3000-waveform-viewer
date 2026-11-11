@@ -32,6 +32,7 @@ export interface BatchSummary {
   groups_list: string[];
   columns: string[];
   time_points?: number[];
+  chromo_time_points?: number[];
 }
 
 
