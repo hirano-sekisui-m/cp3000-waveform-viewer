@@ -8,8 +8,8 @@ if not exist "%~dp0runtime\python.exe" (
     if not defined CP3000_NO_PAUSE pause
     exit /b 1
 )
-if not exist "%~dp0app\app.py" (
-    echo [エラー] app\app.py が見つかりません。先に zip をすべて展開してください。
+if not exist "%~dp0app\api\main.py" (
+    echo [エラー] app\api\main.py が見つかりません。先に zip をすべて展開してください。
     if not defined CP3000_NO_PAUSE pause
     exit /b 1
 )
@@ -17,7 +17,7 @@ if not exist "%~dp0app\app.py" (
 if not exist "%~dp0user" mkdir "%~dp0user"
 set "CP3000_SETTINGS=%~dp0user\settings.json"
 set "PYTHONNOUSERSITE=1"
-if not defined CP3000_PORT set "CP3000_PORT=8510"
+if not defined CP3000_PORT set "CP3000_PORT=8000"
 
 set "CTL=%~dp0runtime\viewer_ctl.py"
 if not exist "%CTL%" set "CTL=%~dp0app\viewer_ctl.py"
@@ -30,18 +30,18 @@ if not "%PRE_RC%"=="0" (
     exit /b %PRE_RC%
 )
 
-echo CP3000 波形ビューワーを起動しています...
+echo CP3000 波形ビューワー を起動しています...
 echo この画面を閉じるとビューワーが終了します。
 echo.
 
 start "" /b "%~dp0runtime\python.exe" "%CTL%" --root "%~dp0." wait-and-open --port %CP3000_PORT%
-"%~dp0runtime\python.exe" -m streamlit run "%~dp0app\app.py" --server.address 127.0.0.1 --server.port %CP3000_PORT% --server.headless true 2> "%~dp0user\last_error.log"
-set "ST_RC=%ERRORLEVEL%"
-if not "%ST_RC%"=="0" (
+"%~dp0runtime\python.exe" -m uvicorn api.main:app --app-dir "%~dp0app" --host 127.0.0.1 --port %CP3000_PORT% 2> "%~dp0user\last_error.log"
+set "UVICORN_RC=%ERRORLEVEL%"
+if not "%UVICORN_RC%"=="0" (
     echo.
     echo [エラー] ビューワーの起動に失敗しました。エラー内容を user\last_error.log に保存しました。
     if exist "%~dp0user\last_error.log" type "%~dp0user\last_error.log"
     if not defined CP3000_NO_PAUSE pause
-    exit /b %ST_RC%
+    exit /b %UVICORN_RC%
 )
 exit /b 0

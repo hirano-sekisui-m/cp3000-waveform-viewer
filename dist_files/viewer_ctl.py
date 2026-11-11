@@ -25,6 +25,22 @@ from typing import Any, Dict, Optional, Tuple
 DEFAULT_GITHUB_REPO = "hirano-sekisui-m/cp3000-waveform-viewer"
 
 
+def _wait_or_timeout(seconds: float = 5.0) -> None:
+    """Wait for user keypress (or Enter), or return after seconds timeout."""
+    if os.environ.get("CP3000_NO_PAUSE") == "1":
+        return
+    try:
+        import msvcrt
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if msvcrt.kbhit():
+                msvcrt.getch()
+                return
+            time.sleep(0.05)
+    except Exception:
+        time.sleep(seconds)
+
+
 def _configure_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         reconf = getattr(stream, "reconfigure", None)
@@ -249,7 +265,7 @@ def cmd_wait_and_open(port: int, timeout: float) -> int:
             timeout = float(env_timeout)
         except ValueError:
             pass
-    health_url = f"http://127.0.0.1:{port}/_stcore/health"
+    health_url = f"http://127.0.0.1:{port}/health"
     app_url = f"http://localhost:{port}"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     deadline = time.monotonic() + timeout
@@ -267,12 +283,10 @@ def cmd_wait_and_open(port: int, timeout: float) -> int:
 
 
 def _find_extracted_root(tmp_dir: Path) -> Optional[Path]:
-    """Locate the directory inside tmp_dir that contains app/app.py."""
-    if (tmp_dir / "app" / "app.py").is_file():
-        return tmp_dir
-    for child in tmp_dir.iterdir():
-        if child.is_dir() and (child / "app" / "app.py").is_file():
-            return child
+    """Locate the directory inside tmp_dir that contains app/cp3000 or app/api."""
+    for base in [tmp_dir] + [c for c in tmp_dir.iterdir() if c.is_dir()]:
+        if (base / "app" / "cp3000" / "__init__.py").is_file() or (base / "app" / "api" / "main.py").is_file() or (base / "app" / "app.py").is_file():
+            return base
     return None
 
 
@@ -330,11 +344,13 @@ def cmd_update(root_dir: Path, port: int, source_override: Optional[str] = None)
     print(f"最新の版: app={latest_app} runtime={latest_rt}")
 
     if latest_app == local_app and latest_rt == local_rt:
-        print("お使いの CP3000 波形ビューワーは最新です。")
+        print("\nお使いの CP3000 波形ビューワーは最新です。")
+        print("Enterキーを押すと画面を閉じます (何もしない場合は 5 秒後に自動終了します)...")
+        _wait_or_timeout(5.0)
         return 0
 
     if latest_rt != local_rt:
-        print(f"全体の入れ替えが必要です (runtime: {local_rt} -> {latest_rt})。")
+        print(f"\n全体の入れ替えが必要です (runtime: {local_rt} -> {latest_rt})。")
         if use_shared_folder:
             print(f"共有フォルダから CP3000Viewer_{latest_app}_full.zip をコピーして展開してください。")
             open_explorer(source_dir)
@@ -342,7 +358,21 @@ def cmd_update(root_dir: Path, port: int, source_override: Optional[str] = None)
             print(f"GitHub Releases から CP3000Viewer_{latest_app}_full.zip をダウンロードして展開してください。")
             if release_page_url:
                 open_browser(release_page_url)
+        print("何かキーを押すと画面を閉じます...")
+        _wait_or_timeout(10.0)
         return 0
+
+    # Confirmation prompt before downloading update
+    if os.environ.get("CP3000_AUTO_UPDATE") != "1":
+        print(f"\n新しいバージョンが見つかりました: v{latest_app} (現在: v{local_app})")
+        try:
+            ans = input("最新版にアップデートしますか？ [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans and ans not in ("y", "yes"):
+            print("アップデートをキャンセルしました。")
+            _wait_or_timeout(3.0)
+            return 0
 
     # App-only update: verify viewer is not running first
     if is_port_open("127.0.0.1", port):
@@ -380,8 +410,11 @@ def cmd_update(root_dir: Path, port: int, source_override: Optional[str] = None)
         with zipfile.ZipFile(target_zip, "r") as zf:
             zf.extractall(tmp_dir)
         extracted_root = _find_extracted_root(tmp_dir)
-        if extracted_root is None or not (extracted_root / "app" / "cp3000" / "__init__.py").is_file():
-            raise RuntimeError("展開したファイルに app/app.py または app/cp3000 が含まれていません。")
+        if extracted_root is None or not (
+            (extracted_root / "app" / "cp3000" / "__init__.py").is_file()
+            or (extracted_root / "app" / "api" / "main.py").is_file()
+        ):
+            raise RuntimeError("展開したファイルに app/cp3000 または app/api が含まれていません。")
     except Exception as exc:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         print(f"[エラー] 更新ファイルの展開に失敗しました: {exc}")
@@ -434,7 +467,9 @@ def cmd_update(root_dir: Path, port: int, source_override: Optional[str] = None)
 
     shutil.rmtree(app_old, ignore_errors=True)
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    print(f"更新が完了しました (app={local_app} -> {latest_app})。")
+    print(f"\n更新が完了しました (app={local_app} -> {latest_app})。")
+    print("Enterキーを押すと画面を閉じます (何もしない場合は 10 秒後に自動終了します)...")
+    _wait_or_timeout(10.0)
     return 0
 
 
@@ -446,14 +481,14 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_pre = sub.add_parser("prelaunch")
-    p_pre.add_argument("--port", type=int, default=8510)
+    p_pre.add_argument("--port", type=int, default=8000)
 
     p_wait = sub.add_parser("wait-and-open")
-    p_wait.add_argument("--port", type=int, default=8510)
+    p_wait.add_argument("--port", type=int, default=8000)
     p_wait.add_argument("--timeout", type=float, default=60.0)
 
     p_upd = sub.add_parser("update")
-    p_upd.add_argument("--port", type=int, default=8510)
+    p_upd.add_argument("--port", type=int, default=8000)
     p_upd.add_argument("--source", default=None)
 
     args = ap.parse_args()

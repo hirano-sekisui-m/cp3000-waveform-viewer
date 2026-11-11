@@ -77,12 +77,8 @@ def _kill_tree(pid: int) -> None:
 
 @pytest.fixture(scope="module")
 def built_zips() -> tuple[Path, Path]:
-    version = build_dist.read_app_version()
-    full_zip = ROOT / "dist" / f"CP3000Viewer_{version}_full.zip"
-    app_zip = ROOT / "dist" / f"CP3000Viewer_app_{version}.zip"
-    if not full_zip.is_file() or not app_zip.is_file():
-        build_dist.build()
-    return full_zip, app_zip
+    """Ensure freshly built zip files exist for current app version."""
+    return build_dist.build()
 
 
 @pytest.fixture(scope="module")
@@ -96,20 +92,22 @@ def extracted_jp_dir(tmp_path_factory, built_zips) -> Path:
     if (pkg_dir / "CP3000Viewer" / "start_viewer.bat").is_file():
         pkg_dir = pkg_dir / "CP3000Viewer"
     assert (pkg_dir / "runtime" / "python.exe").is_file()
-    assert (pkg_dir / "app" / "app.py").is_file()
+    assert (pkg_dir / "app" / "api" / "main.py").is_file()
+    assert (pkg_dir / "app" / "web" / "dist" / "index.html").is_file()
     assert (pkg_dir / "start_viewer.bat").is_file()
     assert (pkg_dir / "update_viewer.bat").is_file()
     return pkg_dir
 
 
 def test_01_existing_tests_pass_on_runtime_python(extracted_jp_dir):
-    """#1: Existing tests (tests/test_viewer.py) pass on bundled Python 3.12 runtime."""
+    """#1: Existing core API & calculation tests (tests/test_api.py) pass on bundled Python 3.12 runtime."""
     runtime_py = extracted_jp_dir / "runtime" / "python.exe"
     venv_site = Path(pytest.__file__).resolve().parents[1]
+    test_api = str(ROOT / "tests" / "test_api.py")
     code = (
         f"import sys; sys.path.append({str(venv_site)!r}); "
         "import pytest; "
-        f"raise SystemExit(pytest.main([{str(ROOT / 'tests' / 'test_viewer.py')!r}, '-q', '-p', 'no:cacheprovider']))"
+        f"raise SystemExit(pytest.main([{test_api!r}, '-q', '-p', 'no:cacheprovider']))"
     )
     res = subprocess.run(
         [str(runtime_py), "-c", code],
@@ -206,14 +204,14 @@ def test_04_start_viewer_bat_without_python_on_path_and_double_click(extracted_j
         upd_res = subprocess.run(
             ["cmd.exe", "/c", str(extracted_jp_dir / "update_viewer.bat")],
             cwd=str(extracted_jp_dir),
-            env=env,
+            env=_clean_env(CP3000_PORT=str(port), CP3000_AUTO_UPDATE="1"),
             capture_output=True,
             timeout=15,
         )
         upd_out = upd_res.stdout.decode("cp932", errors="replace")
         assert upd_res.returncode == 2
         assert "起動中" in upd_out
-        assert "app=0.1.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+        assert "app=0.2.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
     finally:
         _kill_tree(proc.pid)
         try:
@@ -228,11 +226,11 @@ def test_05_startup_failure_writes_last_error_log(extracted_jp_dir):
     err_log.unlink(missing_ok=True)
     port = _free_port()
 
-    # Pass an invalid Streamlit config env var so prelaunch succeeds (0) and streamlit run fails immediately
+    # Pass an invalid log level so uvicorn fails immediately on argument parsing
     env = _clean_env(
         CP3000_PORT=str(port),
         CP3000_WAIT_TIMEOUT="1",
-        STREAMLIT_SERVER_MAX_UPLOAD_SIZE="not_an_integer",
+        UVICORN_LOG_LEVEL="invalid_level",
     )
     res = subprocess.run(
         ["cmd.exe", "/c", str(extracted_jp_dir / "start_viewer.bat")],
@@ -254,7 +252,7 @@ def _make_mock_app_zip(pkg_dir: Path, zip_path: Path, new_version: str, runtime_
         shutil.rmtree(stage)
     shutil.copytree(pkg_dir / "app", stage / "app")
     init_py = stage / "app" / "cp3000" / "__init__.py"
-    txt = init_py.read_text(encoding="utf-8").replace('__version__ = "0.1.0"', f'__version__ = "{new_version}"')
+    txt = init_py.read_text(encoding="utf-8").replace('__version__ = "0.2.0"', f'__version__ = "{new_version}"')
     init_py.write_text(txt, encoding="utf-8")
     shutil.copy2(pkg_dir / "start_viewer.bat", stage / "start_viewer.bat")
     shutil.copy2(pkg_dir / "update_viewer.bat", stage / "update_viewer.bat")
@@ -268,8 +266,8 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     """#8 & #10: Mid-update failure rolls back cleanly; normal update updates app and preserves user/settings.json."""
     share = tmp_path / "shared_folder"
     share.mkdir(parents=True, exist_ok=True)
-    _make_mock_app_zip(extracted_jp_dir, share / "CP3000Viewer_app_0.2.0.zip", "0.2.0")
-    (share / "latest.txt").write_text("app=0.2.0 runtime=py3.12.10-r1\r\n", encoding="utf-8")
+    _make_mock_app_zip(extracted_jp_dir, share / "CP3000Viewer_app_0.3.0.zip", "0.3.0")
+    (share / "latest.txt").write_text("app=0.3.0 runtime=py3.12.10-r1\r\n", encoding="utf-8")
 
     user_dir = extracted_jp_dir / "user"
     (user_dir / "update_source.txt").write_text(str(share) + "\r\n", encoding="utf-8")
@@ -280,7 +278,7 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     upd_bat = extracted_jp_dir / "update_viewer.bat"
 
     # 1. #10: Simulate failure midway after renaming app -> app_old
-    fail_env = _clean_env(CP3000_PORT=str(port), CP3000_SIMULATE_UPDATE_FAIL="1")
+    fail_env = _clean_env(CP3000_PORT=str(port), CP3000_SIMULATE_UPDATE_FAIL="1", CP3000_AUTO_UPDATE="1")
     res_fail = subprocess.run(
         ["cmd.exe", "/c", str(upd_bat)],
         cwd=str(extracted_jp_dir),
@@ -292,20 +290,20 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     assert res_fail.returncode == 1
     assert "元の版に戻しました" in out_fail
     assert not (extracted_jp_dir / "app_old").exists()
-    assert (extracted_jp_dir / "app" / "app.py").is_file()
-    assert "app=0.1.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+    assert (extracted_jp_dir / "app" / "api" / "main.py").is_file()
+    assert "app=0.2.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
 
-    # Verify the rolled-back app still imports and reports 0.1.0
+    # Verify the rolled-back app still imports and reports 0.2.0
     runtime_py = extracted_jp_dir / "runtime" / "python.exe"
     chk = subprocess.run(
-        [str(runtime_py), "-c", "import cp3000; assert cp3000.__version__ == '0.1.0'"],
+        [str(runtime_py), "-c", "import cp3000; assert cp3000.__version__ == '0.2.0'"],
         env=_clean_env(),
         check=False,
     )
     assert chk.returncode == 0
 
-    # 2. #8: Run normal update (0.1.0 -> 0.2.0) and verify user/settings.json is preserved
-    ok_env = _clean_env(CP3000_PORT=str(port))
+    # 2. #8: Run normal update (0.2.0 -> 0.3.0) and verify user/settings.json is preserved
+    ok_env = _clean_env(CP3000_PORT=str(port), CP3000_AUTO_UPDATE="1")
     res_ok = subprocess.run(
         ["cmd.exe", "/c", str(upd_bat)],
         cwd=str(extracted_jp_dir),
@@ -316,17 +314,17 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     out_ok = res_ok.stdout.decode("cp932", errors="replace")
     assert res_ok.returncode == 0, out_ok
     assert "更新が完了しました" in out_ok
-    assert "app=0.2.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+    assert "app=0.3.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
     assert json.loads((user_dir / "settings.json").read_text(encoding="utf-8")) == custom_settings
 
     chk2 = subprocess.run(
-        [str(runtime_py), "-c", "import cp3000; assert cp3000.__version__ == '0.2.0'"],
+        [str(runtime_py), "-c", "import cp3000; assert cp3000.__version__ == '0.3.0'"],
         env=_clean_env(),
         check=False,
     )
     assert chk2.returncode == 0
 
-    # 3. Running update again when already at 0.2.0 reports up-to-date
+    # 3. Running update again when already at 0.3.0 reports up-to-date
     res_up2date = subprocess.run(
         ["cmd.exe", "/c", str(upd_bat)],
         cwd=str(extracted_jp_dir),
@@ -339,7 +337,7 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     assert "最新です" in out_up2date
 
     # 4. When runtime version changes in latest.txt, prompts full replacement
-    (share / "latest.txt").write_text("app=0.3.0 runtime=py3.12.10-r2\r\n", encoding="utf-8")
+    (share / "latest.txt").write_text("app=0.4.0 runtime=py3.12.10-r2\r\n", encoding="utf-8")
     res_rt = subprocess.run(
         ["cmd.exe", "/c", str(upd_bat)],
         cwd=str(extracted_jp_dir),
@@ -350,14 +348,43 @@ def test_06_update_rollback_on_failure_and_success_preserves_settings(extracted_
     out_rt = res_rt.stdout.decode("cp932", errors="replace")
     assert res_rt.returncode == 0
     assert "全体の入れ替えが必要です" in out_rt
-    assert "app=0.2.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+    assert "app=0.3.0" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
 
 
 def test_07_github_release_update_flow(extracted_jp_dir, tmp_path, monkeypatch):
     """When user/update_source.txt is unset or placeholder, update_viewer defaults to GitHub Releases."""
     user_dir = extracted_jp_dir / "user"
     (user_dir / "update_source.txt").write_text(r"\\<サーバー>\<共有>\CP3000Viewer" + "\r\n", encoding="utf-8")
-    (extracted_jp_dir / "VERSION.txt").write_text("app=0.1.0 runtime=py3.12.10-r1\r\n", encoding="utf-8")
+    (extracted_jp_dir / "VERSION.txt").write_text("app=0.2.0 runtime=py3.12.10-r1\r\n", encoding="utf-8")
+
+    sys.path.insert(0, str(ROOT / "dist_files"))
+    import viewer_ctl
+
+    mock_zip = tmp_path / "mock_app_0.2.1.zip"
+    _make_mock_app_zip(extracted_jp_dir, mock_zip, "0.2.1")
+
+    def mock_resolve(repo):
+        return (
+            {"app": "0.2.1", "runtime": "py3.12.10-r1"},
+            "https://github.com/mock/repo/releases/latest",
+            {"name": "CP3000Viewer_app_0.2.1.zip", "url": "https://mock/asset"},
+        )
+
+    def mock_download(url, dest, headers=None, timeout=120.0):
+        shutil.copy2(mock_zip, dest)
+
+    monkeypatch.setattr(viewer_ctl, "resolve_github_latest", mock_resolve)
+    monkeypatch.setattr(viewer_ctl, "_download_file", mock_download)
+    monkeypatch.setenv("CP3000_AUTO_UPDATE", "1")
+
+    # 1. Update from 0.2.0 to 0.2.1 via GitHub releases
+    rc = viewer_ctl.cmd_update(extracted_jp_dir, port=_free_port())
+    assert rc == 0
+    assert "app=0.2.1" in (extracted_jp_dir / "VERSION.txt").read_text(encoding="utf-8")
+
+    # 2. When already up to date
+    rc2 = viewer_ctl.cmd_update(extracted_jp_dir, port=_free_port())
+    assert rc2 == 0
 
     sys.path.insert(0, str(ROOT / "dist_files"))
     import viewer_ctl

@@ -8,10 +8,24 @@ from pathlib import Path
 from typing import Any, Dict
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+# Support both dev repository root and distributable package root (parent of app/)
+APP_PARENT = ROOT_DIR.parent if (ROOT_DIR.parent / "start_viewer.bat").is_file() else ROOT_DIR
 SETTINGS_PATH = Path(os.environ.get("CP3000_SETTINGS") or (ROOT_DIR / "settings.json"))
-DEMO_DIR = ROOT_DIR / "demo_data"
-DATA_SOURCE_DIR = ROOT_DIR / "data-source"
+DEMO_DIR = (ROOT_DIR / "demo_data") if (ROOT_DIR / "demo_data").exists() else (APP_PARENT / "demo_data")
+DATA_SOURCE_DIR = (APP_PARENT / "data-source") if (APP_PARENT / "data-source").exists() else (ROOT_DIR / "data-source")
 STATIC_DIR = ROOT_DIR / "web" / "dist"
+
+
+def resolve_data_path(path_str: str) -> Path:
+    """Resolve a relative or absolute path against DATA_SOURCE_DIR, APP_PARENT, or ROOT_DIR."""
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    for base in (DATA_SOURCE_DIR.parent, APP_PARENT, ROOT_DIR):
+        cand = (base / p).resolve()
+        if cand.exists():
+            return cand
+    return (ROOT_DIR / p).resolve()
 
 
 def get_default_root_path() -> str:

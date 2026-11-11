@@ -9,7 +9,7 @@ if not exist "%~dp0runtime\python.exe" (
     exit /b 1
 )
 
-if not defined CP3000_PORT set "CP3000_PORT=8510"
+if not defined CP3000_PORT set "CP3000_PORT=8000"
 set "PYTHONNOUSERSITE=1"
 
 set "CTL=%~dp0runtime\viewer_ctl.py"
@@ -17,6 +17,8 @@ if not exist "%CTL%" set "CTL=%~dp0app\viewer_ctl.py"
 
 "%~dp0runtime\python.exe" "%CTL%" --root "%~dp0." update --port %CP3000_PORT%
 set "UPD_RC=%ERRORLEVEL%"
-echo.
-if not defined CP3000_NO_PAUSE pause
+if not "%UPD_RC%"=="0" (
+    echo.
+    if not defined CP3000_NO_PAUSE pause
+)
 exit /b %UPD_RC%

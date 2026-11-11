@@ -59,8 +59,8 @@ if not exist "%~dp0runtime\\python.exe" (
     if not defined CP3000_NO_PAUSE pause
     exit /b 1
 )
-if not exist "%~dp0app\\app.py" (
-    echo [エラー] app\\app.py が見つかりません。先に zip をすべて展開してください。
+if not exist "%~dp0app\\api\\main.py" (
+    echo [エラー] app\\api\\main.py が見つかりません。先に zip をすべて展開してください。
     if not defined CP3000_NO_PAUSE pause
     exit /b 1
 )
@@ -68,7 +68,7 @@ if not exist "%~dp0app\\app.py" (
 if not exist "%~dp0user" mkdir "%~dp0user"
 set "CP3000_SETTINGS=%~dp0user\\settings.json"
 set "PYTHONNOUSERSITE=1"
-if not defined CP3000_PORT set "CP3000_PORT=8510"
+if not defined CP3000_PORT set "CP3000_PORT=8000"
 
 set "CTL=%~dp0runtime\\viewer_ctl.py"
 if not exist "%CTL%" set "CTL=%~dp0app\\viewer_ctl.py"
@@ -81,19 +81,19 @@ if not "%PRE_RC%"=="0" (
     exit /b %PRE_RC%
 )
 
-echo CP3000 波形ビューワーを起動しています...
+echo CP3000 波形ビューワー を起動しています...
 echo この画面を閉じるとビューワーが終了します。
 echo.
 
 start "" /b "%~dp0runtime\\python.exe" "%CTL%" --root "%~dp0." wait-and-open --port %CP3000_PORT%
-"%~dp0runtime\\python.exe" -m streamlit run "%~dp0app\\app.py" --server.address 127.0.0.1 --server.port %CP3000_PORT% --server.headless true 2> "%~dp0user\\last_error.log"
-set "ST_RC=%ERRORLEVEL%"
-if not "%ST_RC%"=="0" (
+"%~dp0runtime\\python.exe" -m uvicorn api.main:app --app-dir "%~dp0app" --host 127.0.0.1 --port %CP3000_PORT% 2> "%~dp0user\\last_error.log"
+set "UVICORN_RC=%ERRORLEVEL%"
+if not "%UVICORN_RC%"=="0" (
     echo.
     echo [エラー] ビューワーの起動に失敗しました。エラー内容を user\\last_error.log に保存しました。
     if exist "%~dp0user\\last_error.log" type "%~dp0user\\last_error.log"
     if not defined CP3000_NO_PAUSE pause
-    exit /b %ST_RC%
+    exit /b %UVICORN_RC%
 )
 exit /b 0
 """
@@ -110,7 +110,7 @@ if not exist "%~dp0runtime\\python.exe" (
     exit /b 1
 )
 
-if not defined CP3000_PORT set "CP3000_PORT=8510"
+if not defined CP3000_PORT set "CP3000_PORT=8000"
 set "PYTHONNOUSERSITE=1"
 
 set "CTL=%~dp0runtime\\viewer_ctl.py"
@@ -118,8 +118,10 @@ if not exist "%CTL%" set "CTL=%~dp0app\\viewer_ctl.py"
 
 "%~dp0runtime\\python.exe" "%CTL%" --root "%~dp0." update --port %CP3000_PORT%
 set "UPD_RC=%ERRORLEVEL%"
-echo.
-if not defined CP3000_NO_PAUSE pause
+if not "%UPD_RC%"=="0" (
+    echo.
+    if not defined CP3000_NO_PAUSE pause
+)
 exit /b %UPD_RC%
 """
 
@@ -263,36 +265,33 @@ def copy_app_and_build_demo(pkg_root: Path, runtime_python: Path, app_version: s
     app_dir = pkg_root / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(ROOT / "app.py", app_dir / "app.py")
+    dist_dir = ROOT / "web" / "dist"
+    if not dist_dir.is_dir() or not (dist_dir / "index.html").is_file():
+        raise RuntimeError("web/dist が見つかりません。先に React フロントエンドをビルドしてください (cd web && npm run build)。")
+
     shutil.copytree(
         ROOT / "cp3000",
         app_dir / "cp3000",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         dirs_exist_ok=True,
     )
-    if (ROOT / "api").is_dir():
-        shutil.copytree(
-            ROOT / "api",
-            app_dir / "api",
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-            dirs_exist_ok=True,
-        )
-    if (ROOT / "web" / "dist").is_dir():
-        shutil.copytree(
-            ROOT / "web" / "dist",
-            app_dir / "web" / "dist",
-            dirs_exist_ok=True,
-        )
+    shutil.copytree(
+        ROOT / "api",
+        app_dir / "api",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        dirs_exist_ok=True,
+    )
+    shutil.copytree(
+        dist_dir,
+        app_dir / "web" / "dist",
+        dirs_exist_ok=True,
+    )
 
     if app_version != read_app_version():
         init_file = app_dir / "cp3000" / "__init__.py"
         text = init_file.read_text(encoding="utf-8")
         text = re.sub(r'^__version__\s*=\s*["\'][^"\']+["\']', f'__version__ = "{app_version}"', text, flags=re.M)
         init_file.write_text(text, encoding="utf-8")
-
-    st_dir = app_dir / ".streamlit"
-    st_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / ".streamlit" / "config.toml", st_dir / "config.toml")
 
     # Copy helper controller script into both app/ and runtime/
     shutil.copy2(DIST_FILES_DIR / "viewer_ctl.py", app_dir / "viewer_ctl.py")
@@ -319,16 +318,20 @@ def place_root_and_user_files(
     print("[6/8] Writing launcher bat files, README.txt, VERSION.txt, and user/ defaults ...")
     sync_dist_files_templates()
     shutil.copy2(DIST_FILES_DIR / "start_viewer.bat", pkg_root / "start_viewer.bat")
-    if (DIST_FILES_DIR / "start_viewer_react.bat").is_file():
-        shutil.copy2(DIST_FILES_DIR / "start_viewer_react.bat", pkg_root / "start_viewer_react.bat")
     shutil.copy2(DIST_FILES_DIR / "update_viewer.bat", pkg_root / "update_viewer.bat")
-
 
     readme_text = (DIST_FILES_DIR / "README.txt").read_text(encoding="utf-8")
     (pkg_root / "README.txt").write_bytes(readme_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
 
     version_line = f"app={app_version} runtime={runtime_version}\r\n"
     (pkg_root / "VERSION.txt").write_bytes(version_line.encode("utf-8"))
+
+    # Prepare data-source directory with guide
+    data_source_dir = pkg_root / "data-source"
+    data_source_dir.mkdir(parents=True, exist_ok=True)
+    guide_src = ROOT / "data-source" / "README.txt"
+    if guide_src.is_file():
+        shutil.copy2(guide_src, data_source_dir / "README.txt")
 
     user_dir = pkg_root / "user"
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -363,35 +366,32 @@ def find_free_port() -> int:
 
 
 def verify_bundle(pkg_root: Path, runtime_python: Path, expected_version: str) -> None:
-    print("[8/8] Verifying bundle (isolated imports + Streamlit health check) ...")
+    print("[8/8] Verifying bundle (isolated imports + FastAPI health check) ...")
     env = clean_env()
     env["CP3000_SETTINGS"] = str(pkg_root / "user" / "settings.json")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     # 1. Verify imports
     check_code = (
-        "import streamlit, plotly, numpy, pandas, pyarrow, altair, cp3000; "
+        "import fastapi, uvicorn, pydantic, plotly, numpy, pandas, cp3000, api; "
         f"assert cp3000.__version__ == {expected_version!r}, cp3000.__version__; "
-        "print('      Imports OK: cp3000=' + cp3000.__version__ + ', streamlit=' + streamlit.__version__)"
+        "print('      Imports OK: cp3000=' + cp3000.__version__ + ', fastapi=' + fastapi.__version__)"
     )
     subprocess.run([str(runtime_python), "-c", check_code], env=env, check=True)
 
-    # 2. Verify Streamlit server launch and /_stcore/health response
+    # 2. Verify FastAPI server launch and /health response
     port = find_free_port()
     cmd = [
         str(runtime_python),
         "-m",
-        "streamlit",
-        "run",
-        str(pkg_root / "app" / "app.py"),
-        "--server.address",
+        "uvicorn",
+        "api.main:app",
+        "--app-dir",
+        str(pkg_root / "app"),
+        "--host",
         "127.0.0.1",
-        "--server.port",
+        "--port",
         str(port),
-        "--server.headless",
-        "true",
-        "--browser.gatherUsageStats",
-        "false",
     ]
     proc = subprocess.Popen(
         cmd,
@@ -401,10 +401,10 @@ def verify_bundle(pkg_root: Path, runtime_python: Path, expected_version: str) -
         stderr=subprocess.PIPE,
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    health_url = f"http://127.0.0.1:{port}/_stcore/health"
+    health_url = f"http://127.0.0.1:{port}/health"
     ok = False
     try:
-        deadline = time.monotonic() + 45.0
+        deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 break
@@ -420,11 +420,11 @@ def verify_bundle(pkg_root: Path, runtime_python: Path, expected_version: str) -
         if not ok:
             out, err = proc.communicate(timeout=5)
             raise RuntimeError(
-                f"Streamlit health check failed on port {port}.\n"
+                f"FastAPI health check failed on port {port}.\n"
                 f"STDOUT: {out.decode('utf-8', errors='replace')}\n"
                 f"STDERR: {err.decode('utf-8', errors='replace')}"
             )
-        print(f"      Streamlit /_stcore/health responded OK on 127.0.0.1:{port}")
+        print(f"      FastAPI /health responded OK on 127.0.0.1:{port}")
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -469,7 +469,6 @@ def make_app_zip(pkg_root: Path, zip_path: Path, include_top: bool = False) -> N
     items = [
         pkg_root / "README.txt",
         pkg_root / "start_viewer.bat",
-        pkg_root / "start_viewer_react.bat",
         pkg_root / "update_viewer.bat",
         pkg_root / "VERSION.txt",
     ]

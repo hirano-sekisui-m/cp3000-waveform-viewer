@@ -16,6 +16,7 @@ from api.config import (
     ROOT_DIR,
     get_default_root_path,
     load_settings,
+    resolve_data_path,
     save_settings,
 )
 from api.schemas.batch import (
@@ -44,9 +45,7 @@ def list_batch_folders(root_path: Optional[str] = Query(None)) -> List[FolderEnt
     if not clean_root:
         return []
 
-    rootp = Path(clean_root)
-    if not rootp.is_absolute():
-        rootp = (ROOT_DIR / rootp).resolve()
+    rootp = resolve_data_path(clean_root)
 
     if not rootp.exists():
         return []
@@ -111,9 +110,7 @@ def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
         target_csv_str = req.folder_path
 
     if target_csv_str:
-        csv_p = Path(clean_path(target_csv_str))
-        if not csv_p.is_absolute():
-            csv_p = (ROOT_DIR / csv_p).resolve()
+        csv_p = resolve_data_path(clean_path(target_csv_str))
         if not csv_p.is_file():
             raise HTTPException(status_code=400, detail=f"CSV file not found: {csv_p}")
         prof_p = None
@@ -125,9 +122,7 @@ def load_batch_endpoint(req: LoadBatchRequest) -> BatchSummaryResponse:
             raise HTTPException(status_code=400, detail="folder_path or entry_id is required")
 
         folder_str = req.folder_path or req.entry_id
-        folder = Path(clean_path(folder_str))
-        if not folder.is_absolute():
-            folder = (ROOT_DIR / folder).resolve()
+        folder = resolve_data_path(clean_path(folder_str))
         if not folder.exists():
             raise HTTPException(status_code=400, detail=f"Folder not found: {folder}")
 
