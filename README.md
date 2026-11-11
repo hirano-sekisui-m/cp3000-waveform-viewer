@@ -9,25 +9,42 @@ CWA-ML-tool から、生データの読込と波形計算の部分だけを切�
 
 ### 1. React + FastAPI 版（新UI・推奨）
 
-#### bat から起動する場合
-`run_viewer_react.bat` をダブルクリックします。ブラウザで http://localhost:8000 が開きます。
+#### ターミナルから起動する場合
 
-#### ターミナルから手動で起動する場合 (通常起動)
-FastAPI がビルド済み React 画面を同時に配信するため、単一コマンドで動作します。
+Windows のターミナル（PowerShell またはコマンド プロンプト）を、リポジトリのルートフォルダで開いて実行します。
+
+初めてソースを取得したときは、React の画面をビルドしてください（Node.js 18 以上が必要です）。`npm ci` は初回のみ実行し、画面コード (`web/src/`) を変更したときは `npm run build` で再ビルドします。
 
 ```bat
-.venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+cd web
+npm ci
+npm run build
+cd ..
 ```
-ブラウザで **http://localhost:8000** を開きます（API ドキュメントは http://localhost:8000/docs）。
 
-> ※ React 側のコード (`web/src/`) を変更した場合は、`cd web && npm run build && cd ..` で再ビルドすると反映されます。
+準備ができたら、次のコマンドで起動します。
+
+```bat
+.\run_viewer_react.bat
+```
+
+初回は Python 3.10 以上が必要です。この bat が `.venv` の作成と Python ライブラリのインストールを行います。ブラウザで **http://localhost:8000** を開きます（API ドキュメントは http://localhost:8000/docs）。終了するにはターミナルで `Ctrl+C` を押します。bat をダブルクリックしても起動できます。
+
+#### Python コマンドで直接起動する場合
+
+上記のReact画面のビルドと Python ライブラリのインストールが済んでいる場合は、次のコマンドでも起動できます。
+
+```bat
+.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+ブラウザで **http://localhost:8000** を開きます。終了するには `Ctrl+C` を押します。
 
 #### フロントエンド開発モード (React のホットリロード)
-画面コードを編集しながら即座にブラウザ反映（HMR）させたい場合は、ターミナルを 2 つ開いて実行します。
+画面コードを編集しながら即座にブラウザ反映（HMR）させたい場合は、Node.js 18 以上を用意し、ターミナルを 2 つ開いて実行します。`npm ci` は `web` フォルダで初回のみ実行してください。
 
 - **ターミナル 1 (API サーバー):**
   ```bat
-  .venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+  .\.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
   ```
 - **ターミナル 2 (Vite 開発サーバー):**
   ```bat
@@ -40,14 +57,11 @@ FastAPI がビルド済み React 画面を同時に配信するため、単一�
 
 ### 2. Streamlit 版（従来UI）
 
-#### bat から起動する場合
-`run_viewer.bat` をダブルクリックします。ブラウザで http://localhost:8510 が開きます。
-
-#### ターミナルから手動で起動する場合
+ターミナルをリポジトリのルートフォルダで開いて、次を実行します。
 ```bat
-.venv\Scripts\python -m streamlit run app.py
+.\run_viewer.bat
 ```
-ブラウザで **http://localhost:8510** を開きます。
+初回は Python 3.10 以上が必要です。この bat が `.venv` の作成と Python ライブラリのインストールを行います。ブラウザで **http://localhost:8510** を開きます。終了するには `Ctrl+C` を押します。bat をダブルクリックしても起動できます。
 
 ---
 
