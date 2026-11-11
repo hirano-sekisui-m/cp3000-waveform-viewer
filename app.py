@@ -44,6 +44,7 @@ from cp3000.signal import align_waveform_time, derive_batch
 APP_DIR = Path(__file__).resolve().parent
 SETTINGS = Path(os.environ.get("CP3000_SETTINGS") or (APP_DIR / "settings.json"))
 DEMO_DIR = APP_DIR / "demo_data"
+DATA_SOURCE_DIR = APP_DIR / "data-source"
 PLOT_CONFIG = {"displaylogo": False, "toImageButtonOptions": {"format": "png", "scale": 2, "filename": "cp3000_waveform"}}
 
 st.set_page_config(page_title="CP3000 波形ビューワー", page_icon="📈", layout="wide")
@@ -136,9 +137,9 @@ with st.sidebar:
     prof_p = csv_p = log_p = None
     batch_name = ""
     if source == "フォルダから選ぶ":
-        default_root = settings.get("root") or str(DEMO_DIR)
+        default_root = settings.get("root") or (str(DATA_SOURCE_DIR) if DATA_SOURCE_DIR.exists() and any(DATA_SOURCE_DIR.iterdir()) else str(DEMO_DIR))
         root = st.text_input("親フォルダ(バッチのフォルダを含む場所)", value=default_root,
-                             help="例: E:\\CWA\\data\\raw。この下で prof*.dat または *CSV_data.csv を含むフォルダを探します(3階層まで)。")
+                             help="測定データはアプリの.batファイルと同じ階層の「data-source/」に配置してください（例: data-source または E:\\CWA\\data）。この下で prof*.dat または *CSV_data.csv を含むフォルダを探します(3階層まで)。")
         if root != settings.get("root"):
             save_settings(root=root)
         root_clean = clean_path(root)
@@ -164,7 +165,8 @@ with st.sidebar:
             labels = [e[0] for e in batch_entries]
             last = str(direct_csv.relative_to(rootp)) if direct_csv is not None else settings.get("last_batch")
             idx = labels.index(last) if last in labels else 0
-            pick = st.selectbox(f"測定バッチ({len(batch_entries)} 件)", labels, index=idx)
+            pick = st.selectbox(f"バッチを選択({len(batch_entries)} 件)", labels, index=idx,
+                                help="バッチフォルダ(prof+CSV+LOGの3点セット)またはCSVファイル単体のどちらも選択可能です。")
             if direct_csv is None and pick != settings.get("last_batch"):
                 save_settings(last_batch=pick)
             _, folder, picked_csv = batch_entries[labels.index(pick)]

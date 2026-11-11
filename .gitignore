@@ -11,3 +11,6 @@ web/node_modules/
 # never commit real instrument data
 *.dat
 *CSV_data.csv
+data-source/*
+!data-source/README.txt
+

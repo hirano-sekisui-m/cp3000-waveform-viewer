@@ -11,9 +11,9 @@ interface Props {
 export const Header: React.FC<Props> = ({ summary, sidebarOpen, onToggleSidebar }) => {
   if (!summary) return null;
 
-  const profFile = summary.files.find((f) => f.kind === "prof");
-  const csvFile = summary.files.find((f) => f.kind === "csv");
-  const logFile = summary.files.find((f) => f.kind === "log");
+  const profFile = summary.files.find((f) => f.kind.toLowerCase() === "prof");
+  const csvFile = summary.files.find((f) => f.kind.toLowerCase() === "csv");
+  const logFile = summary.files.find((f) => f.kind.toLowerCase() === "log");
 
   return (
     <header style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -36,15 +36,24 @@ export const Header: React.FC<Props> = ({ summary, sidebarOpen, onToggleSidebar 
 
       {/* Chips */}
       <div className="chips-container">
-        <span className={`chip ${profFile?.filename ? "ok" : "no"}`}>
+        <span
+          className={`chip ${profFile?.filename ? "ok" : "no"}`}
+          title={profFile?.filename ? `生波形データ: ${profFile.filename}` : "生波形データ (prof*.dat) はありません"}
+        >
           {profFile?.filename ? <Check size={12} color="#166534" /> : "–"}
           <span>prof{profFile?.filename ? `: ${profFile.filename}` : ""}</span>
         </span>
-        <span className={`chip ${csvFile?.filename ? "ok" : "no"}`}>
+        <span
+          className={`chip ${csvFile?.filename ? "ok" : "no"}`}
+          title={csvFile?.filename ? `測定結果CSV: ${csvFile.filename}` : "測定結果CSV (*CSV_data.csv) はありません"}
+        >
           {csvFile?.filename ? <Check size={12} color="#166534" /> : "–"}
           <span>CSV{csvFile?.filename ? `: ${csvFile.filename}` : ""}</span>
         </span>
-        <span className={`chip ${logFile?.filename ? "ok" : "no"}`}>
+        <span
+          className={`chip ${logFile?.filename ? "ok" : "no"}`}
+          title={logFile?.filename ? `装置ログ: ${logFile.filename}` : "装置ログ (LOG*.dat) はありません"}
+        >
           {logFile?.filename ? <Check size={12} color="#166534" /> : "–"}
           <span>LOG{logFile?.filename ? `: ${logFile.filename}` : ""}</span>
         </span>
