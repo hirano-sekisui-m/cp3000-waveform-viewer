@@ -122,7 +122,7 @@ def test_app_renders(demo, tmp_path, monkeypatch):
 
     app_dir = tmp_path / "app"
     shutil.copytree(ROOT / "cp3000", app_dir / "cp3000")
-    shutil.copy(ROOT / "app.py", app_dir / "app.py")
+    shutil.copy(ROOT / "legacy" / "app.py", app_dir / "app.py")
     (app_dir / "settings.json").write_text('{"root": "%s"}' % str(demo).replace("\\", "\\\\"), encoding="utf-8")
     monkeypatch.syspath_prepend(str(app_dir))
     at = AppTest.from_file(str(app_dir / "app.py"), default_timeout=120)
@@ -189,7 +189,7 @@ def test_app_renders_csv_only(demo, tmp_path, monkeypatch):
     shutil.copy2(src_csv if src_csv.is_file() else (demo / "b6000" / "b6000_CSV_data.csv"), demo / target_name)
     app_dir = tmp_path / "app_csv"
     shutil.copytree(ROOT / "cp3000", app_dir / "cp3000")
-    shutil.copy(ROOT / "app.py", app_dir / "app.py")
+    shutil.copy(ROOT / "legacy" / "app.py", app_dir / "app.py")
     (app_dir / "settings.json").write_text('{"root": "%s"}' % str(demo).replace("\\", "\\\\"), encoding="utf-8")
     monkeypatch.syspath_prepend(str(app_dir))
     at = AppTest.from_file(str(app_dir / "app.py"), default_timeout=120)
@@ -255,7 +255,7 @@ def test_csv_variable_and_mixed_time_intervals(tmp_path, monkeypatch):
     # Also verify UI rendering on the mixed-interval CSV batch
     app_dir = tmp_path / "app_mix"
     shutil.copytree(ROOT / "cp3000", app_dir / "cp3000")
-    shutil.copy(ROOT / "app.py", app_dir / "app.py")
+    shutil.copy(ROOT / "legacy" / "app.py", app_dir / "app.py")
     (app_dir / "settings.json").write_text('{"root": "%s"}' % str(csv_file).replace("\\", "\\\\"), encoding="utf-8")
     monkeypatch.syspath_prepend(str(app_dir))
     at = AppTest.from_file(str(app_dir / "app.py"), default_timeout=120)
@@ -344,7 +344,7 @@ def test_synthetic_chromogenic_batch_and_ui(tmp_path, monkeypatch):
 
     app_dir = tmp_path / "app_chrono"
     shutil.copytree(ROOT / "cp3000", app_dir / "cp3000")
-    shutil.copy(ROOT / "app.py", app_dir / "app.py")
+    shutil.copy(ROOT / "legacy" / "app.py", app_dir / "app.py")
     (app_dir / "settings.json").write_text('{"root": "%s"}' % str(csv_path).replace("\\", "\\\\"), encoding="utf-8")
     monkeypatch.syspath_prepend(str(app_dir))
 

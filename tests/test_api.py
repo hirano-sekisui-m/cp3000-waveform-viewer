@@ -65,6 +65,22 @@ def test_list_folders(demo_batch_dir):
     assert folders[0]["has_prof"] is True
 
 
+def test_list_folders_sorted_by_mtime(tmp_path):
+    import time
+    d1 = tmp_path / "older_batch"
+    d2 = tmp_path / "newer_batch"
+    build_batch(d1, n_samples=4, profile_n=3600, seed=1, start_internal=18001)
+    time.sleep(0.05)
+    build_batch(d2, n_samples=4, profile_n=3600, seed=2, start_internal=18010)
+
+    res = client.get("/api/batches/folders", params={"root_path": str(tmp_path)})
+    assert res.status_code == 200
+    folders = res.json()
+    assert len(folders) == 2
+    # newer_batch should be first (sorted by mtime descending)
+    assert "newer_batch" in folders[0]["label"]
+
+
 def test_summary():
     res = client.get("/api/batches/summary")
     assert res.status_code == 200

@@ -173,11 +173,13 @@ export const TabOverlay: React.FC<Props> = ({ summary, records, options, onChang
   const numPanels = Math.max(1, waveTypes.length);
 
   const chromoTimePoints =
-    seriesData.length > 0 && seriesData[0].time && seriesData[0].time.length > 0
-      ? (seriesData[0].time as number[])
-      : summary.chromo_time_points && summary.chromo_time_points.length > 0
+    summary.chromo_time_points && summary.chromo_time_points.length > 0
       ? summary.chromo_time_points
-      : summary.time_points;
+      : summary.time_points && summary.time_points.length > 0
+      ? summary.time_points
+      : seriesData.length > 0 && seriesData[0].time && seriesData[0].time.length > 0
+      ? (seriesData[0].time as number[])
+      : [];
 
   const traces: any[] = [];
 

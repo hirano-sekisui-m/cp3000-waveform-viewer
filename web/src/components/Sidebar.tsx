@@ -280,14 +280,18 @@ export const Sidebar: React.FC<Props> = ({
             value={options.selectedMode}
             onChange={(e) => {
               const newMode = e.target.value;
-              const newWaveTypes =
-                newMode === "比色項目"
-                  ? ["raw", "base_aligned", "abs_slope"]
-                  : ["raw", "scaled", "slope"];
+              const isChrom = newMode === "比色項目";
+              const newWaveTypes = isChrom
+                ? ["raw", "base_aligned", "abs_slope"]
+                : ["raw", "scaled", "slope"];
               onChangeOptions({
                 selectedMode: newMode,
                 waveTypes: newWaveTypes,
-                align: newMode === "比色項目" ? "off" : options.align,
+                windowEndSec: "",
+                xStart: "",
+                xEnd: "",
+                align: "off",
+                chromoRefPointIdx: 0,
               });
             }}
           >

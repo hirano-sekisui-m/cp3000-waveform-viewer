@@ -113,12 +113,10 @@ cp3000/                 計算コア (波形計算・ファイル読込)
   batch.py              CSV の読込と 3 ファイルの突合、フォルダの探索
   signal.py             移動平均・累積・速度・加速度、Te/Tc
   plots.py              Plotly の図 (Streamlit 用)
-app.py                  Streamlit アプリ (併行維持)
+legacy/                 旧 Streamlit アプリ関連 (app.py, run_viewer.bat, .streamlit)
 run_viewer_react.bat    React + FastAPI 版の起動 bat
-run_viewer.bat          Streamlit 版の起動 bat
 dist_files/
-  start_viewer_react.bat 配布パッケージ用の React 版起動 bat
-  start_viewer.bat      配布パッケージ用の Streamlit 版起動 bat
+  start_viewer.bat      配布パッケージ用の起動 bat (FastAPI + React 配信)
   update_viewer.bat     配布パッケージ用の更新 bat(Shift-JIS)
   viewer_ctl.py         起動・ヘルスチェック・差分更新スクリプト
   README.txt            利用者向けの使い方説明書

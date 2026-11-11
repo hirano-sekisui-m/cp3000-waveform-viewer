@@ -47,24 +47,12 @@ export const App: React.FC = () => {
         const root = settings.root || "data-source";
         setOptions((prev) => ({ ...prev, rootPath: root }));
         return listFolders(root).then((folders) => {
-          if (folders.length === 0 && (!settings.root || settings.root === "data-source")) {
-            return listFolders("demo_data").then((demoFolders) => {
-              if (demoFolders.length > 0) {
-                setOptions((prev) => ({ ...prev, rootPath: "demo_data" }));
-                setFolderEntries(demoFolders);
-                const target = settings.last_batch || (demoFolders[0]?.entry_id ?? "");
-                if (target) {
-                  setOptions((prev) => ({ ...prev, selectedBatchFolder: target }));
-                  handleLoadBatch(target, demoFolders);
-                }
-                return;
-              }
-              setFolderEntries([]);
-            });
-          }
           setFolderEntries(folders);
-          const target = settings.last_batch || (folders[0]?.entry_id ?? "");
-          if (target) {
+          if (folders.length > 0) {
+            // Newest folder or file is at index 0
+            const target = (settings.last_batch && folders.some((f) => f.entry_id === settings.last_batch))
+              ? settings.last_batch
+              : folders[0].entry_id;
             setOptions((prev) => ({ ...prev, selectedBatchFolder: target }));
             handleLoadBatch(target, folders);
           }
@@ -122,15 +110,23 @@ export const App: React.FC = () => {
       setSummary(sum);
 
       const auto = autoSelectMode(sum.modes);
+      // Clean reload: reset all waveform & plot settings to defaults
       setOptions((prev) => ({
         ...prev,
         selectedBatchFolder: entryId,
         selectedMode: auto.mode,
         waveTypes: auto.waveTypes,
-        align: auto.mode === "比色項目" ? "off" : prev.align,
+        windowEndSec: "",
+        xStart: "",
+        xEnd: "",
+        baseline: false,
+        align: "off",
+        showTc2: true,
+        coagRatio: 0.5,
+        chromoRefPointIdx: 0,
       }));
 
-      await fetchRecords(sum, auto.mode);
+      await fetchRecords(sum, auto.mode, "");
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -139,7 +135,6 @@ export const App: React.FC = () => {
   };
 
   const handleUploadFiles = async (files: File[]) => {
-
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -147,14 +142,24 @@ export const App: React.FC = () => {
       setSummary(sum);
 
       const auto = autoSelectMode(sum.modes);
+      // Clean reload: reset all waveform & plot settings to defaults
       setOptions((prev) => ({
         ...prev,
+        sourceType: "upload",
+        selectedBatchFolder: "",
         selectedMode: auto.mode,
         waveTypes: auto.waveTypes,
-        align: auto.mode === "比色項目" ? "off" : prev.align,
+        windowEndSec: "",
+        xStart: "",
+        xEnd: "",
+        baseline: false,
+        align: "off",
+        showTc2: true,
+        coagRatio: 0.5,
+        chromoRefPointIdx: 0,
       }));
 
-      await fetchRecords(sum, auto.mode);
+      await fetchRecords(sum, auto.mode, "");
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -162,11 +167,12 @@ export const App: React.FC = () => {
     }
   };
 
-  const fetchRecords = async (currentSummary: BatchSummary, mode?: string) => {
+  const fetchRecords = async (currentSummary: BatchSummary, mode?: string, windowEndSecOverride?: string | null) => {
     try {
+      const winVal = windowEndSecOverride !== undefined ? windowEndSecOverride : options.windowEndSec;
       const res = await queryRecords({
         mode: mode || undefined,
-        window_end_sec: options.windowEndSec ? parseFloat(options.windowEndSec) : null,
+        window_end_sec: winVal ? parseFloat(winVal) : null,
         coag_ratio: options.coagRatio,
       });
       setRecords(res.records);
@@ -177,7 +183,19 @@ export const App: React.FC = () => {
 
   const handleChangeOptions = (partial: Partial<SidebarOptions>) => {
     const updated = { ...options, ...partial };
-    if (updated.selectedMode === "比色項目" && updated.waveTypes.includes("scaled")) {
+
+    // When switching measurement mode, completely reset range/alignment/reference settings
+    if (partial.selectedMode !== undefined && partial.selectedMode !== options.selectedMode) {
+      const isChrom = partial.selectedMode === "比色項目";
+      updated.waveTypes = isChrom
+        ? ["raw", "base_aligned", "abs_slope"]
+        : ["raw", "scaled", "slope"];
+      updated.windowEndSec = "";
+      updated.xStart = "";
+      updated.xEnd = "";
+      updated.align = "off";
+      updated.chromoRefPointIdx = 0;
+    } else if (updated.selectedMode === "比色項目" && updated.waveTypes.includes("scaled")) {
       updated.waveTypes = updated.waveTypes
         .map((t) => (t === "scaled" ? "base_aligned" : t))
         .filter((t, i, arr) => arr.indexOf(t) === i);
@@ -189,10 +207,10 @@ export const App: React.FC = () => {
     }
 
     if (partial.selectedMode !== undefined && summary) {
-      fetchRecords(summary, partial.selectedMode);
+      fetchRecords(summary, partial.selectedMode, "");
     } else if (partial.windowEndSec !== undefined || partial.coagRatio !== undefined) {
       if (summary) {
-        fetchRecords(summary, updated.selectedMode);
+        fetchRecords(summary, updated.selectedMode, updated.windowEndSec);
       }
     }
   };

@@ -84,6 +84,32 @@ def list_batch_folders(root_path: Optional[str] = Query(None)) -> List[FolderEnt
                     has_log=False,
                 ))
 
+    def _entry_mtime(entry: FolderEntry) -> float:
+        try:
+            if entry.csv_path:
+                p = Path(entry.csv_path)
+                if p.is_file():
+                    return p.stat().st_mtime
+            if entry.folder_path:
+                fp = Path(entry.folder_path)
+                if fp.is_file():
+                    return fp.stat().st_mtime
+                if fp.is_dir():
+                    mtimes = [p.stat().st_mtime for p in fp.iterdir() if p.is_file()]
+                    if mtimes:
+                        return max(mtimes)
+                    return fp.stat().st_mtime
+        except Exception:
+            pass
+        return 0.0
+
+    # Sort entries by modified time descending (newest first)
+    entries.sort(key=_entry_mtime, reverse=True)
+
+    if direct_csv is not None:
+        direct_str = str(direct_csv)
+        entries.sort(key=lambda e: 0 if (e.csv_path == direct_str or e.entry_id == direct_str) else 1)
+
     return entries
 
 

@@ -62,11 +62,13 @@ export const TabDetail: React.FC<Props> = ({ summary, records, options, onChange
   const c = detail.calculated;
 
   const chromoTimePoints =
-    detail && detail.time && detail.time.length > 0
-      ? detail.time.filter((x): x is number => x != null)
-      : summary.chromo_time_points && summary.chromo_time_points.length > 0
+    summary.chromo_time_points && summary.chromo_time_points.length > 0
       ? summary.chromo_time_points
-      : summary.time_points;
+      : summary.time_points && summary.time_points.length > 0
+      ? summary.time_points
+      : detail && detail.time && detail.time.length > 0
+      ? detail.time.filter((x): x is number => x != null)
+      : [];
 
   const currentRefTime =
     detail && detail.time && options.chromoRefPointIdx >= 0 && options.chromoRefPointIdx < detail.time.length

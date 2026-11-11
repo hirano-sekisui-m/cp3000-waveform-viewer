@@ -15,7 +15,7 @@ from api.routes import batches, export, system, waveforms
 app = FastAPI(
     title="CP3000 Waveform Viewer API",
     description="FastAPI backend for CP3000 Waveform Viewer",
-    version="0.2.0",
+    version="0.2.1",
 )
 
 # CORS middleware for development (e.g. Vite dev server on port 5173)

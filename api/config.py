@@ -30,34 +30,27 @@ def resolve_data_path(path_str: str) -> Path:
 
 def get_default_root_path() -> str:
     """Determine the default root folder path:
-    1. data-source if it exists and contains batches or CSVs
-    2. demo_data if it exists
-    3. data-source as standard location
+    Always prefer data-source as standard location for routine operation.
+    Falls back to demo_data only if data-source directory does not exist at all.
     """
     if DATA_SOURCE_DIR.exists():
-        try:
-            has_files = any(
-                p.suffix.lower() == ".csv" or (p.is_dir() and not p.name.startswith("."))
-                for p in DATA_SOURCE_DIR.iterdir()
-            )
-            if has_files:
-                return str(DATA_SOURCE_DIR)
-        except Exception:
-            pass
+        return "data-source"
     if DEMO_DIR.exists():
-        return str(DEMO_DIR)
-    return str(DATA_SOURCE_DIR)
-
+        return "demo_data"
+    return "data-source"
 
 
 def load_settings() -> Dict[str, Any]:
-    """Load settings from JSON file or return empty dict."""
+    """Load settings from JSON file or return default dict."""
     try:
         if SETTINGS_PATH.is_file():
-            return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            if not data.get("root"):
+                data["root"] = get_default_root_path()
+            return data
     except Exception:
         pass
-    return {}
+    return {"root": get_default_root_path()}
 
 
 def save_settings(**kw: Any) -> Dict[str, Any]:
